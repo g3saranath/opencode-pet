@@ -1,0 +1,33 @@
+{
+  "name": "opencode-scrybe",
+  "version": "0.1.0",
+  "description": "A desktop pet for opencode that scries your session and scribes it live — a little wizard on a broom streaming the model's reasoning, tool calls, and output.",
+  "main": "app/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "scrybe": "electron ."
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "desktop-pet",
+    "electron",
+    "overlay",
+    "companion",
+    "ai-coding"
+  ],
+  "homepage": "https://github.com/g3saranath/opencode-scrybe#readme",
+  "bugs": {
+    "url": "https://github.com/g3saranath/opencode-scrybe/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/g3saranath/opencode-scrybe.git"
+  },
+  "author": "g3saranath <gayathrisaranath1998@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

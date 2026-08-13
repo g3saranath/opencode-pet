@@ -1,0 +1,312 @@
+/* ===================================================================
+   opencode-pet — Harry Potter on a broom
+   =================================================================== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+#stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 240px;
+  height: 214px;
+  transform: scale(var(--scale, 1));
+  transform-origin: 0 0;
+  --face: 1;
+  --lean: 0deg;
+  --spell: #ffd54a;   /* wand-tip / spell colour, overridden per tool */
+}
+#stage.feed-on { height: 392px; }
+#stage.face-left { --face: -1; }
+
+.pet {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 240px;
+  height: 214px;
+  transform: rotate(var(--lean));
+  transform-origin: 50% 88%;
+  transition: transform 0.06s linear;
+  cursor: grab;
+}
+body.dragging, body.dragging * { cursor: grabbing !important; }
+
+#harry {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  transform: scaleX(var(--face));
+  transform-origin: 50% 50%;
+}
+
+/* the whole flyer bobs; individual states retarget this animation */
+#fly {
+  transform-box: fill-box;
+  transform-origin: 50% 82%;
+  animation: fly 2.8s ease-in-out infinite;
+}
+#shadow { animation: shadowPulse 2.8s ease-in-out infinite; }
+#scarf-tail { transform-box: fill-box; transform-origin: 100% 0%; animation: flutter 1.1s ease-in-out infinite; }
+#wand-tip, #spell { transition: opacity 0.2s ease; }
+.eye { transition: none; }
+.pupil { transition: transform 0.25s ease; }
+#mouth { transition: d 0.2s ease; }
+
+/* ---------- speech / status bubble ---------- */
+.bubble {
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  transform: translateX(-50%) scale(0.6);
+  transform-origin: 50% 120%;
+  max-width: 210px;
+  padding: 5px 9px;
+  background: rgba(255,255,255,0.96);
+  color: #1d2b3a;
+  font: 600 12px/1.15 system-ui, -apple-system, sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.22);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 5;
+}
+.bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%; bottom: -6px;
+  transform: translateX(-50%);
+  border: 7px solid transparent;
+  border-top-color: rgba(255,255,255,0.96);
+  border-bottom: 0;
+}
+#bubble-emoji { margin-right: 3px; }
+.bubble.show { opacity: 1; transform: translateX(-50%) scale(1); }
+
+/* ---------- overlays ---------- */
+.zzz {
+  position: absolute; top: 40px; right: 60px; display: none;
+  color: #cfe9ff; font: 700 14px/1 system-ui, sans-serif;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.35); z-index: 4;
+}
+.zzz span { display: inline-block; animation: floatz 2.4s ease-in-out infinite; }
+.zzz span:nth-child(1){ font-size: 11px; animation-delay: 0s; }
+.zzz span:nth-child(2){ font-size: 14px; animation-delay: .4s; }
+.zzz span:nth-child(3){ font-size: 17px; animation-delay: .8s; }
+
+.sparkles { position: absolute; inset: 0; display: none; z-index: 4; }
+.sparkles i {
+  position: absolute; width: 9px; height: 9px;
+  background: linear-gradient(#fff, var(--spell,#ffd54a));
+  clip-path: polygon(50% 0,60% 40%,100% 50%,60% 60%,50% 100%,40% 60%,0 50%,40% 40%);
+  opacity: 0;
+}
+.sparkles i:nth-child(1){ left:180px; top:40px; animation: pop 1s ease infinite 0s; }
+.sparkles i:nth-child(2){ left:200px; top:60px; animation: pop 1s ease infinite .15s; }
+.sparkles i:nth-child(3){ left:165px; top:24px; animation: pop 1s ease infinite .3s; }
+.sparkles i:nth-child(4){ left:120px; top:26px; animation: pop 1s ease infinite .45s; }
+.sparkles i:nth-child(5){ left:150px; top:52px; animation: pop 1s ease infinite .6s; }
+.sparkles i:nth-child(6){ left:196px; top:34px; animation: pop 1s ease infinite .75s; }
+
+.sweat {
+  position: absolute; top: 44px; left: 138px;
+  width: 9px; height: 13px;
+  background: linear-gradient(#bfeaff, #74c7ff);
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  transform: rotate(8deg); opacity: 0; z-index: 4;
+}
+
+.speedlines { position: absolute; inset: 0; opacity: 0; z-index: 1; }
+.speedlines span {
+  position: absolute; height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, rgba(120,180,255,0), rgba(120,180,255,.8));
+}
+.speedlines span:nth-child(1){ width:34px; left:2px;  top:96px;  animation: dash .5s linear infinite; }
+.speedlines span:nth-child(2){ width:26px; left:6px;  top:112px; animation: dash .5s linear infinite .1s; }
+.speedlines span:nth-child(3){ width:30px; left:0;    top:80px;  animation: dash .5s linear infinite .2s; }
+
+/* per-tool floating prop (emoji set from JS) */
+.prop {
+  position: absolute; top: 30px; left: 158px;
+  font-size: 20px; opacity: 0; z-index: 4;
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,.3));
+  transition: opacity .2s ease;
+}
+.prop.show { opacity: 1; animation: propBob 1.6s ease-in-out infinite; }
+
+/* =====================================================================
+   STATES
+   ===================================================================== */
+/* idle — calm hover (defaults) */
+
+/* thinking — look up, slow drift, wand dim */
+.state-thinking .pupil { transform: translateY(-2.5px); }
+.state-thinking #fly { animation: drift 3s ease-in-out infinite; }
+
+/* working — lean forward, speed lines, wand lit */
+.state-working #fly { animation: zoom .5s ease-in-out infinite; }
+.state-working .speedlines { opacity: 1; }
+.state-working #wand-tip { opacity: 1; }
+.state-working #spell { opacity: .55; }
+.state-working .prop { opacity: 1; }
+
+/* waiting — hover upright, look at you, wand tap */
+.state-waiting #fly { animation: fly 1.4s ease-in-out infinite; }
+.state-waiting .pupil { transform: translateY(1.5px); }
+
+/* happy — spell burst + grin */
+.state-happy #fly { animation: cheer .6s ease-in-out infinite; }
+.state-happy .sparkles { display: block; }
+.state-happy #wand-tip { opacity: 1; }
+.state-happy #spell { opacity: .8; }
+.state-happy #mouth { d: path("M112 83 Q121 92 130 83"); }
+
+/* error — tumble, glasses of doom, sweat */
+.state-error #fly { animation: tumble .5s ease-in-out infinite; }
+.state-error .sweat { opacity: 1; animation: drip 1.2s ease-in-out infinite; }
+.state-error #mouth { d: path("M114 88 Q121 82 128 88"); }
+.state-error .pupil { transform: scale(1.2); }
+
+/* sleeping — slump, closed eyes, zzz */
+.state-sleeping #fly { animation: snooze 3.6s ease-in-out infinite; }
+.state-sleeping .zzz { display: block; }
+.state-sleeping .eye { transform: scaleY(.15); transform-box: fill-box; transform-origin: 50% 50%; }
+.state-sleeping .pupil { opacity: 0; }
+.state-sleeping #mouth { d: path("M116 86 Q121 88 126 86"); }
+
+/* =====================================================================
+   PER-TOOL FACES  (spell colour + expression tweaks; prop set in JS)
+   #stage prefix needed so these out-specify the base --spell on #stage.
+   ===================================================================== */
+#stage.tool-edit,  #stage.tool-write, #stage.tool-patch { --spell: #ff7ac0; }
+#stage.tool-read      { --spell: #7ad0ff; }
+#stage.tool-bash      { --spell: #9b7bff; }
+#stage.tool-grep,  #stage.tool-glob, #stage.tool-list { --spell: #6ee7a8; }
+#stage.tool-webfetch, #stage.tool-websearch     { --spell: #ffd54a; }
+#stage.tool-task      { --spell: #ff9d5c; }
+#stage.tool-todowrite { --spell: #c9d1ff; }
+
+/* squint while searching */
+.tool-grep .eye, .tool-glob .eye { transform: scaleY(.6); transform-box: fill-box; transform-origin: 50% 50%; }
+/* wide focus while editing */
+.tool-edit .pupil, .tool-write .pupil { transform: translateY(-1px) scale(1.05); }
+
+/* =====================================================================
+   KEYFRAMES
+   ===================================================================== */
+@keyframes fly    { 0%,100%{ transform: translateY(0) rotate(0); } 50%{ transform: translateY(-6px) rotate(-1.5deg); } }
+@keyframes drift  { 0%,100%{ transform: translateY(-2px) rotate(-2deg); } 50%{ transform: translateY(-7px) rotate(2deg); } }
+@keyframes zoom   { 0%,100%{ transform: translateY(0) rotate(-4deg); } 50%{ transform: translateY(-4px) rotate(-6deg); } }
+@keyframes cheer  { 0%{ transform: translateY(0) rotate(-2deg);} 40%{ transform: translateY(-14px) rotate(3deg);} 70%{ transform: translateY(-2px) rotate(-1deg);} 100%{ transform: translateY(0) rotate(-2deg);} }
+@keyframes tumble { 0%,100%{ transform: translateY(0) rotate(-7deg);} 50%{ transform: translateY(3px) rotate(7deg);} }
+@keyframes snooze { 0%,100%{ transform: translateY(2px) rotate(3deg) scale(.99);} 50%{ transform: translateY(5px) rotate(4deg) scale(.985);} }
+@keyframes shadowPulse { 0%,100%{ transform: scale(1); opacity:.5;} 50%{ transform: scale(.82); opacity:.32;} }
+@keyframes flutter { 0%,100%{ transform: rotate(0) skewX(0);} 50%{ transform: rotate(-8deg) skewX(6deg);} }
+@keyframes floatz  { 0%{ transform: translate(0,0) scale(.8); opacity:0;} 30%{opacity:1;} 100%{ transform: translate(6px,-16px) scale(1.1); opacity:0;} }
+@keyframes pop     { 0%,100%{ transform: scale(0) rotate(0); opacity:0;} 50%{ transform: scale(1) rotate(90deg); opacity:1;} }
+@keyframes drip    { 0%{ transform: translateY(0) rotate(8deg); opacity:.9;} 70%{ transform: translateY(6px) rotate(8deg); opacity:1;} 100%{ transform: translateY(14px) rotate(8deg); opacity:0;} }
+@keyframes dash    { 0%{ transform: translateX(6px); opacity:0;} 40%{opacity:1;} 100%{ transform: translateX(-14px); opacity:0;} }
+@keyframes propBob { 0%,100%{ transform: translateY(0) rotate(-6deg);} 50%{ transform: translateY(-5px) rotate(6deg);} }
+
+/* =====================================================================
+   ACTIVITY FEED
+   ===================================================================== */
+.feed {
+  position: absolute;
+  left: 6px;
+  top: 216px;
+  width: 228px;
+  height: 170px;
+  display: none;
+  flex-direction: column;
+  padding: 5px 8px 6px;
+  border-radius: 12px;
+  background: rgba(18, 22, 40, 0.82);
+  border: 1px solid rgba(255, 213, 74, 0.28);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35), inset 0 0 20px rgba(90,120,255,0.06);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  overflow: hidden;
+  z-index: 3;
+}
+#stage.feed-on .feed { display: flex; }
+
+.feed-title {
+  font: 700 9px/1 system-ui, sans-serif;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: #f0c44a;
+  opacity: 0.85;
+  margin-bottom: 4px;
+  flex: 0 0 auto;
+}
+.feed-title span { opacity: 0.9; }
+
+.feed-list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;   /* newest pinned to the bottom */
+  gap: 3px;
+  overflow: hidden;
+}
+.feed-empty {
+  font: 500 11px/1.2 system-ui, sans-serif;
+  color: rgba(210,220,255,0.4);
+  font-style: italic;
+}
+.feed-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font: 500 10.5px/1.32 ui-monospace, "SF Mono", Menlo, monospace;
+  color: #cdd6f4;
+}
+.feed-line .fi { flex: 0 0 auto; font-size: 11px; line-height: 1.3; }
+.feed-line .ft {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* streaming transcript lines wrap to a few lines so you can read them */
+.feed-line.say .ft,
+.feed-line.reason .ft,
+.feed-line.out .ft {
+  white-space: normal;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.feed-line.new { animation: feedIn 0.28s ease; }
+
+.feed-line:first-child { opacity: 0.6; }
+
+.feed-line.you   { color: #ffffff; font-weight: 600; }
+.feed-line.step  { color: #bcd4ff; }
+.feed-line.say   { color: #e4ebff; }
+.feed-line.reason{ color: rgba(200,206,236,0.72); font-style: italic; }
+.feed-line.out   { color: #9fdcc0; }
+.feed-line.plan  { color: #d7c9ff; }
+.feed-line.wait  { color: #ffd27a; }
+.feed-line.done  { color: #8ef0b0; font-weight: 600; }
+.feed-line.error { color: #ff8f9e; font-weight: 600; }
+.feed-line.meta  { color: rgba(200,210,240,0.55); }
+
+@keyframes feedIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
