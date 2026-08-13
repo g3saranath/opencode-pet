@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧙 Scrybe Pet
+# Opencode Scrybe Pet
 
 **A desktop pet for [opencode](https://opencode.ai) that _scries_ your session and _scribes_ it live.**
 
