@@ -67,22 +67,30 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   height: 210px;
   transform: translateX(-50%);
   background: url("sprite.png") center / contain no-repeat;
+  transition: filter 0.35s ease;
 }
 
 /* per-mood sprite swap — the top layer is the mood art, the base sprite sits
-   underneath as a graceful fallback if a mood file is missing */
+   underneath as a graceful fallback if a mood file is missing. A subtle mood
+   colour-grade is applied on top so the pet visibly changes per state even
+   with a single base image. */
 .state-thinking .sprite {
   background: url("sprite-thinking.png") center / contain no-repeat,
               url("sprite.png") center / contain no-repeat;
+  filter: saturate(0.82) brightness(1.03) hue-rotate(-10deg);
 }
 .state-working .sprite {
   background: url("sprite-working.png") center / contain no-repeat,
               url("sprite.png") center / contain no-repeat;
+  filter: saturate(1.35) contrast(1.08) brightness(1.05);
 }
 .state-sleeping .sprite {
   background: url("sprite-sleeping.png") center / contain no-repeat,
               url("sprite.png") center / contain no-repeat;
+  filter: saturate(0.6) brightness(0.78) hue-rotate(-8deg) blur(0.4px);
 }
+.state-happy .sprite { filter: saturate(1.25) brightness(1.06); }
+.state-error .sprite { filter: saturate(1.1) brightness(0.98) hue-rotate(-25deg); }
 
 .shadow {
   position: absolute;

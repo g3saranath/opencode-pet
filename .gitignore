@@ -4,3 +4,6 @@ node_modules/
 # Local character art (not distributed — keep third-party/copyrighted images out of the repo)
 harry-potter-flying-broom.png
 app/renderer/sprite*.png
+
+# macOS
+.DS_Store
