@@ -1,5 +1,5 @@
 {
-  "name": "opencode-scrybe",
+  "name": "opencode-pet",
   "version": "0.1.0",
   "description": "A desktop pet for opencode that scries your session and scribes it live — a little wizard on a broom streaming the model's reasoning, tool calls, and output.",
   "main": "app/main.js",
@@ -17,13 +17,13 @@
     "companion",
     "ai-coding"
   ],
-  "homepage": "https://github.com/g3saranath/opencode-scrybe#readme",
+  "homepage": "https://github.com/g3saranath/opencode-pet#readme",
   "bugs": {
-    "url": "https://github.com/g3saranath/opencode-scrybe/issues"
+    "url": "https://github.com/g3saranath/opencode-pet/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/g3saranath/opencode-scrybe.git"
+    "url": "git+https://github.com/g3saranath/opencode-pet.git"
   },
   "author": "g3saranath <gayathrisaranath1998@gmail.com>",
   "license": "MIT",

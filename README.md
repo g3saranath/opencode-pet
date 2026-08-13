@@ -62,13 +62,13 @@ there are no ports and nothing to configure.
 Requires [Node.js](https://nodejs.org) and [opencode](https://opencode.ai).
 
 ```sh
-git clone https://github.com/g3saranath/opencode-scrybe.git ~/opencode-scrybe
-cd ~/opencode-scrybe
+git clone https://github.com/g3saranath/opencode-pet.git ~/opencode-pet
+cd ~/opencode-pet
 npm install                                     # downloads Electron
 
 # register the plugin with opencode (global)
 mkdir -p ~/.config/opencode/plugin
-ln -sf ~/opencode-scrybe/plugin/pet.ts ~/.config/opencode/plugin/scrybe.ts
+ln -sf ~/opencode-pet/plugin/pet.ts ~/.config/opencode/plugin/pet.ts
 ```
 
 Then **restart opencode**. Scrybe appears automatically and starts relaying the
@@ -93,7 +93,7 @@ session. (Plugins load only at startup, so restart after any change.)
 
 | Variable                   | Effect                                                     |
 | -------------------------- | ---------------------------------------------------------- |
-| `OPENCODE_PET_DIR`         | Path to this checkout (auto-detected if `~/opencode-scrybe` or `~/opencode-pet`) |
+| `OPENCODE_PET_DIR`         | Path to this checkout (auto-detected if `~/opencode-pet` or `~/opencode-pet`) |
 | `OPENCODE_PET_NO_LAUNCH=1` | Don't auto-launch the overlay from the plugin              |
 
 Runtime files (in `~/.cache/opencode-pet/`): `state.json` (current relay),
