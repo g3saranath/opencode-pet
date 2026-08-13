@@ -42,12 +42,20 @@ opencode ──(plugin)──► ~/.cache/opencode-pet/state.json ──(watch)�
   session/tool/message events, keeps a rolling relay of the last steps + the
   streaming reasoning/response, and writes it (throttled) to a small state file.
   It also pulses a heartbeat and launches the overlay.
-- **`app/`** — a transparent, always-on-top Electron window. The wizard is drawn
-  as inline SVG and animated with CSS. Click-through everywhere except the
-  character itself.
+- **`app/`** — a transparent, always-on-top Electron window. The character is a
+  raster sprite (`app/renderer/sprite.png`) animated with CSS; moods are carried
+  by flight motion and overlays. Click-through everywhere except the character
+  itself.
 
 The overlay and plugin talk only through files in `~/.cache/opencode-pet/`, so
 there are no ports and nothing to configure.
+
+> **Character art is not bundled.** `app/renderer/sprite.png` is intentionally
+> git-ignored (bring your own art). Drop any square, transparent-background PNG
+> there and restart the overlay. For per-mood art, add
+> `sprite-thinking.png`, `sprite-working.png`, and/or `sprite-sleeping.png`
+> alongside it — each is used for that state, falling back to `sprite.png` when
+> absent.
 
 ## Install
 

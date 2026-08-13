@@ -25,7 +25,8 @@ html, body {
   --spell: #ffd54a;   /* wand-tip / spell colour, overridden per tool */
 }
 #stage.feed-on { height: 392px; }
-#stage.face-left { --face: -1; }
+/* the sprite art faces left by default; flip it to face right */
+#stage.flip { --face: -1; }
 
 .pet {
   position: absolute;
@@ -44,22 +45,71 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   position: absolute;
   left: 0;
   bottom: 0;
+  width: 240px;
+  height: 214px;
   transform: scaleX(var(--face));
-  transform-origin: 50% 50%;
+  transform-origin: 50% 60%;
 }
 
 /* the whole flyer bobs; individual states retarget this animation */
 #fly {
-  transform-box: fill-box;
+  position: absolute;
+  inset: 0;
   transform-origin: 50% 82%;
   animation: fly 2.8s ease-in-out infinite;
 }
-#shadow { animation: shadowPulse 2.8s ease-in-out infinite; }
-#scarf-tail { transform-box: fill-box; transform-origin: 100% 0%; animation: flutter 1.1s ease-in-out infinite; }
-#wand-tip, #spell { transition: opacity 0.2s ease; }
-.eye { transition: none; }
-.pupil { transition: transform 0.25s ease; }
-#mouth { transition: d 0.2s ease; }
+
+.sprite {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  width: 210px;
+  height: 210px;
+  transform: translateX(-50%);
+  background: url("sprite.png") center / contain no-repeat;
+}
+
+/* per-mood sprite swap — the top layer is the mood art, the base sprite sits
+   underneath as a graceful fallback if a mood file is missing */
+.state-thinking .sprite {
+  background: url("sprite-thinking.png") center / contain no-repeat,
+              url("sprite.png") center / contain no-repeat;
+}
+.state-working .sprite {
+  background: url("sprite-working.png") center / contain no-repeat,
+              url("sprite.png") center / contain no-repeat;
+}
+.state-sleeping .sprite {
+  background: url("sprite-sleeping.png") center / contain no-repeat,
+              url("sprite.png") center / contain no-repeat;
+}
+
+.shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 120px;
+  height: 16px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0.28), rgba(0,0,0,0) 70%);
+  filter: blur(1px);
+  animation: shadowPulse 2.8s ease-in-out infinite;
+}
+
+/* magical broom/wand glow (per-tool colour), lit while casting */
+.spellglow {
+  position: absolute;
+  left: 46px;
+  bottom: 42px;
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, var(--spell, #ffd54a) 34%, rgba(255,213,74,0) 70%);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
 
 /* ---------- speech / status bubble ---------- */
 .bubble {
@@ -133,9 +183,9 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   position: absolute; height: 3px; border-radius: 2px;
   background: linear-gradient(90deg, rgba(120,180,255,0), rgba(120,180,255,.8));
 }
-.speedlines span:nth-child(1){ width:34px; left:2px;  top:96px;  animation: dash .5s linear infinite; }
-.speedlines span:nth-child(2){ width:26px; left:6px;  top:112px; animation: dash .5s linear infinite .1s; }
-.speedlines span:nth-child(3){ width:30px; left:0;    top:80px;  animation: dash .5s linear infinite .2s; }
+.speedlines span:nth-child(1){ width:34px; left:150px; top:150px; animation: dash .5s linear infinite; }
+.speedlines span:nth-child(2){ width:26px; left:160px; top:166px; animation: dash .5s linear infinite .1s; }
+.speedlines span:nth-child(3){ width:30px; left:152px; top:134px; animation: dash .5s linear infinite .2s; }
 
 /* per-tool floating prop (emoji set from JS) */
 .prop {
@@ -147,47 +197,37 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .prop.show { opacity: 1; animation: propBob 1.6s ease-in-out infinite; }
 
 /* =====================================================================
-   STATES
+   STATES  (mood is carried by motion + overlays; the sprite is static)
    ===================================================================== */
 /* idle — calm hover (defaults) */
 
-/* thinking — look up, slow drift, wand dim */
-.state-thinking .pupil { transform: translateY(-2.5px); }
+/* thinking — slow drift */
 .state-thinking #fly { animation: drift 3s ease-in-out infinite; }
 
-/* working — lean forward, speed lines, wand lit */
+/* working — lean into flight, speed lines, broom aglow */
 .state-working #fly { animation: zoom .5s ease-in-out infinite; }
 .state-working .speedlines { opacity: 1; }
-.state-working #wand-tip { opacity: 1; }
-.state-working #spell { opacity: .55; }
+.state-working .spellglow { opacity: .7; }
 .state-working .prop { opacity: 1; }
 
-/* waiting — hover upright, look at you, wand tap */
+/* waiting — expectant hover */
 .state-waiting #fly { animation: fly 1.4s ease-in-out infinite; }
-.state-waiting .pupil { transform: translateY(1.5px); }
 
-/* happy — spell burst + grin */
+/* happy — celebratory hop + spell burst */
 .state-happy #fly { animation: cheer .6s ease-in-out infinite; }
 .state-happy .sparkles { display: block; }
-.state-happy #wand-tip { opacity: 1; }
-.state-happy #spell { opacity: .8; }
-.state-happy #mouth { d: path("M112 83 Q121 92 130 83"); }
+.state-happy .spellglow { opacity: .9; }
 
-/* error — tumble, glasses of doom, sweat */
+/* error — tumble + sweat */
 .state-error #fly { animation: tumble .5s ease-in-out infinite; }
 .state-error .sweat { opacity: 1; animation: drip 1.2s ease-in-out infinite; }
-.state-error #mouth { d: path("M114 88 Q121 82 128 88"); }
-.state-error .pupil { transform: scale(1.2); }
 
-/* sleeping — slump, closed eyes, zzz */
+/* sleeping — slow snooze + zzz */
 .state-sleeping #fly { animation: snooze 3.6s ease-in-out infinite; }
 .state-sleeping .zzz { display: block; }
-.state-sleeping .eye { transform: scaleY(.15); transform-box: fill-box; transform-origin: 50% 50%; }
-.state-sleeping .pupil { opacity: 0; }
-.state-sleeping #mouth { d: path("M116 86 Q121 88 126 86"); }
 
 /* =====================================================================
-   PER-TOOL FACES  (spell colour + expression tweaks; prop set in JS)
+   PER-TOOL  (spell colour tints the sparkles + broom glow; prop set in JS)
    #stage prefix needed so these out-specify the base --spell on #stage.
    ===================================================================== */
 #stage.tool-edit,  #stage.tool-write, #stage.tool-patch { --spell: #ff7ac0; }
@@ -198,11 +238,6 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 #stage.tool-task      { --spell: #ff9d5c; }
 #stage.tool-todowrite { --spell: #c9d1ff; }
 
-/* squint while searching */
-.tool-grep .eye, .tool-glob .eye { transform: scaleY(.6); transform-box: fill-box; transform-origin: 50% 50%; }
-/* wide focus while editing */
-.tool-edit .pupil, .tool-write .pupil { transform: translateY(-1px) scale(1.05); }
-
 /* =====================================================================
    KEYFRAMES
    ===================================================================== */
@@ -212,7 +247,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 @keyframes cheer  { 0%{ transform: translateY(0) rotate(-2deg);} 40%{ transform: translateY(-14px) rotate(3deg);} 70%{ transform: translateY(-2px) rotate(-1deg);} 100%{ transform: translateY(0) rotate(-2deg);} }
 @keyframes tumble { 0%,100%{ transform: translateY(0) rotate(-7deg);} 50%{ transform: translateY(3px) rotate(7deg);} }
 @keyframes snooze { 0%,100%{ transform: translateY(2px) rotate(3deg) scale(.99);} 50%{ transform: translateY(5px) rotate(4deg) scale(.985);} }
-@keyframes shadowPulse { 0%,100%{ transform: scale(1); opacity:.5;} 50%{ transform: scale(.82); opacity:.32;} }
+@keyframes shadowPulse { 0%,100%{ transform: translateX(-50%) scale(1); opacity:.5;} 50%{ transform: translateX(-50%) scale(.82); opacity:.32;} }
 @keyframes flutter { 0%,100%{ transform: rotate(0) skewX(0);} 50%{ transform: rotate(-8deg) skewX(6deg);} }
 @keyframes floatz  { 0%{ transform: translate(0,0) scale(.8); opacity:0;} 30%{opacity:1;} 100%{ transform: translate(6px,-16px) scale(1.1); opacity:0;} }
 @keyframes pop     { 0%,100%{ transform: scale(0) rotate(0); opacity:0;} 50%{ transform: scale(1) rotate(90deg); opacity:1;} }

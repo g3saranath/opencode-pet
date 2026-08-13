@@ -173,7 +173,9 @@ function playError() {
 // ---------------------------------------------------------------------------
 let moveIdleTimer = null;
 function onMove({ dx, speed }) {
-  if (Math.abs(dx) > 0.6) stage.classList.toggle("face-left", dx < 0);
+  // The sprite art faces left; flip it to face right when dragged rightward,
+  // so he always looks the way he's moving.
+  if (Math.abs(dx) > 0.6) stage.classList.toggle("flip", dx > 0);
   const lean = Math.max(-10, Math.min(10, dx * 1.2));
   stage.style.setProperty("--lean", lean.toFixed(1) + "deg");
   if (speed > 6) {

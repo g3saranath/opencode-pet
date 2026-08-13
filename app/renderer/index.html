@@ -3,11 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:;" />
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:;" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <div id="stage" class="face-right state-idle feed-on">
+    <div id="stage" class="state-idle feed-on">
       <!-- speech / status bubble -->
       <div id="bubble" class="bubble">
         <span id="bubble-emoji">💭</span><span id="bubble-text"></span>
@@ -21,120 +21,14 @@
         <div class="speedlines"><span></span><span></span><span></span></div>
         <div id="prop" class="prop"></div>
 
-        <!-- Harry on a broom -->
-        <svg id="harry" viewBox="0 0 240 190" width="240" height="190"
-             xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="broomGrad" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0" stop-color="#7a4a1e"/>
-              <stop offset="1" stop-color="#a9702f"/>
-            </linearGradient>
-            <radialGradient id="spellGrad" cx="0.5" cy="0.5" r="0.5">
-              <stop offset="0" stop-color="#fff"/>
-              <stop offset="0.4" stop-color="var(--spell, #ffd54a)"/>
-              <stop offset="1" stop-color="rgba(255,213,74,0)"/>
-            </radialGradient>
-          </defs>
-
-          <!-- shadow -->
-          <ellipse id="shadow" cx="120" cy="182" rx="60" ry="8" fill="rgba(0,0,0,0.22)"/>
-
-          <g id="fly">
-          <!-- ================= BROOM ================= -->
-          <g id="broom">
-            <!-- bristles (back / left) -->
-            <g id="bristles">
-              <polygon points="44,150 14,138 8,152 15,170 46,162" fill="#e0a94a"/>
-              <path d="M16 141 L10 165 M22 143 L18 168 M30 145 L28 169"
-                    stroke="#b9832f" stroke-width="1.5"/>
-              <rect x="42" y="141" width="8" height="22" rx="3" fill="#6f4420"/>
-            </g>
-            <!-- stick -->
-            <rect x="46" y="149" width="162" height="9" rx="4.5" fill="url(#broomGrad)"/>
-            <rect x="196" y="147" width="16" height="12" rx="5" fill="#5c3617"/>
-          </g>
-
-          <!-- ================= HARRY ================= -->
-          <g id="harry-body">
-            <!-- back arm holding broom -->
-            <path id="arm-back" d="M112 112 Q104 132 118 150"
-                  stroke="#20233a" stroke-width="10" stroke-linecap="round" fill="none"/>
-
-            <!-- robe / cloak -->
-            <path id="robe" d="M98 152 C90 128 96 108 108 100
-                     C118 94 128 94 138 100 C150 110 152 130 144 152
-                     C130 158 112 158 98 152 Z" fill="#23283a"/>
-            <!-- red robe trim -->
-            <path d="M108 101 C120 96 128 96 138 101 L134 108
-                     C126 104 118 104 112 108 Z" fill="#b3122b"/>
-
-            <!-- leg over broom -->
-            <path id="leg" d="M126 146 Q140 146 150 152 L150 158 Q138 156 126 154 Z"
-                  fill="#20233a"/>
-            <ellipse cx="151" cy="156" rx="7" ry="4" fill="#111"/>
-
-            <!-- front arm + wand (casting) -->
-            <g id="cast-arm">
-              <path d="M132 108 Q154 98 178 92" stroke="#23283a"
-                    stroke-width="10" stroke-linecap="round" fill="none"/>
-              <circle cx="180" cy="91" r="6" fill="#f1c9a5"/>
-              <line id="wand" x1="182" y1="90" x2="206" y2="72"
-                    stroke="#4a2f1c" stroke-width="3.2" stroke-linecap="round"/>
-              <circle id="wand-tip" cx="207" cy="71" r="3" fill="var(--spell,#ffd54a)"/>
-              <circle id="spell" cx="207" cy="71" r="14" fill="url(#spellGrad)" opacity="0"/>
-            </g>
-
-            <!-- neck -->
-            <rect x="114" y="86" width="16" height="14" rx="5" fill="#e9bd97"/>
-
-            <!-- scarf (Gryffindor) -->
-            <g id="scarf">
-              <path id="scarf-tail" d="M110 96 Q84 100 72 116 Q86 108 108 106 Z"
-                    fill="#a01b2b"/>
-              <rect x="103" y="93" width="34" height="10" rx="5" fill="#a01b2b"/>
-              <rect x="103" y="96" width="34" height="3" fill="#e6b422"/>
-              <rect x="72" y="112" width="10" height="3" fill="#e6b422"
-                    transform="rotate(30 77 113)"/>
-            </g>
-
-            <!-- head -->
-            <circle id="head" cx="120" cy="70" r="22" fill="#f1c9a5"/>
-            <circle id="ear" cx="99" cy="72" r="5" fill="#e9bd97"/>
-
-            <!-- face -->
-            <g id="face">
-              <ellipse class="eye eye-l" cx="113" cy="70" rx="7" ry="8" fill="#fff"/>
-              <ellipse class="eye eye-r" cx="130" cy="70" rx="7" ry="8" fill="#fff"/>
-              <circle class="pupil pupil-l" cx="114" cy="71" r="3.2" fill="#3a2a1a"/>
-              <circle class="pupil pupil-r" cx="131" cy="71" r="3.2" fill="#3a2a1a"/>
-              <path id="mouth" d="M114 84 Q121 89 128 84" stroke="#7a3b2b"
-                    stroke-width="2.2" fill="none" stroke-linecap="round"/>
-              <!-- round glasses -->
-              <g id="glasses" stroke="#15110d" stroke-width="2.2" fill="none">
-                <circle cx="113" cy="70" r="9"/>
-                <circle cx="131" cy="70" r="9"/>
-                <line x1="122" y1="70" x2="122" y2="70.5"/>
-                <path d="M122 69 h0.5" />
-                <line x1="121.5" y1="69.5" x2="122.5" y2="69.5"/>
-                <line x1="104" y1="69" x2="99" y2="71"/>
-              </g>
-              <!-- glasses bridge -->
-              <line x1="122" y1="69.5" x2="122" y2="69.5" stroke="#15110d" stroke-width="2"/>
-              <path d="M122 69.5 h0" stroke="#15110d" stroke-width="2"/>
-            </g>
-
-            <!-- scar -->
-            <path id="scar" d="M136 55 l-3 6 l4 0 l-3 6" stroke="#b5322a"
-                  stroke-width="2" fill="none" stroke-linejoin="round"/>
-
-            <!-- hair -->
-            <path id="hair" d="M98 70 Q95 46 120 44 Q145 46 142 70
-                     Q138 60 132 65 Q129 54 123 63 Q119 54 114 63
-                     Q109 55 105 64 Q101 58 98 70 Z" fill="#17110c"/>
-            <path d="M99 70 Q97 78 101 84 L106 74 Z" fill="#17110c"/>
-          </g>
-          </g>
-        </svg>
+        <!-- wizard on a broom (raster sprite) -->
+        <div id="harry">
+          <div id="fly">
+            <div class="spellglow"></div>
+            <div class="sprite"></div>
+          </div>
+          <div class="shadow"></div>
+        </div>
       </div>
 
       <!-- live activity log -->
