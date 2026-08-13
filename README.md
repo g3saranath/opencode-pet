@@ -1,4 +1,4 @@
-# Scrybe 🔮
+# Scrybe Pet
 
 A desktop pet for [opencode](https://opencode.ai) that **scries** your session
 and **scribes** it live. A little wizard on a broom sits on top of your screen
