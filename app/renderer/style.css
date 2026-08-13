@@ -87,7 +87,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .state-sleeping .sprite {
   background: url("sprite-sleeping.png") center / contain no-repeat,
               url("sprite.png") center / contain no-repeat;
-  filter: saturate(0.6) brightness(0.78) hue-rotate(-8deg) blur(0.4px);
+  filter: saturate(0.92) brightness(0.93);
 }
 .state-happy .sprite { filter: saturate(1.25) brightness(1.06); }
 .state-error .sprite { filter: saturate(1.1) brightness(0.98) hue-rotate(-25deg); }
@@ -201,6 +201,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   font-size: 20px; opacity: 0; z-index: 4;
   filter: drop-shadow(0 2px 2px rgba(0,0,0,.3));
   transition: opacity .2s ease;
+  display: none;   /* the per-mode artwork carries its own props now */
 }
 .prop.show { opacity: 1; animation: propBob 1.6s ease-in-out infinite; }
 
@@ -214,9 +215,8 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 
 /* working — lean into flight, speed lines, broom aglow */
 .state-working #fly { animation: zoom .5s ease-in-out infinite; }
-.state-working .speedlines { opacity: 1; }
-.state-working .spellglow { opacity: .7; }
-.state-working .prop { opacity: 1; }
+/* the working artwork carries its own props (book/quill), so we skip the
+   flying-cast overlays (speed-lines / broom glow / floating prop) here */
 
 /* waiting — expectant hover */
 .state-waiting #fly { animation: fly 1.4s ease-in-out infinite; }
@@ -232,7 +232,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 
 /* sleeping — slow snooze + zzz */
 .state-sleeping #fly { animation: snooze 3.6s ease-in-out infinite; }
-.state-sleeping .zzz { display: block; }
+/* the sleeping artwork already has its own zzz, so we skip the overlay one */
 
 /* =====================================================================
    PER-TOOL  (spell colour tints the sparkles + broom glow; prop set in JS)

@@ -1,9 +1,11 @@
 node_modules/
 *.log
 
-# Local character art (not distributed — keep third-party/copyrighted images out of the repo)
+# Redundant original source drop (the app uses app/renderer/sprite.png)
 harry-potter-flying-broom.png
-app/renderer/sprite*.png
 
 # macOS
 .DS_Store
+
+# raw source art drops
+app/renderer/spite-*

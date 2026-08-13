@@ -19,8 +19,11 @@ Think of it as a tiny, glanceable "what is my agent doing right now?" companion.
   in place), each tool call with its target, and the tool **output**.
 - **Live status bubble.** The current action + target at a glance:
   `✏️ main.js`, `⚙️ npm test`, `🔍 TODO`, `📝 3/5 done`, `❓ allow bash?`.
-- **Per-tool spellwork.** Wand-glow colour, a floating prop, and expression
-  change per tool (edit ✍️ · read 📖 · bash 🧪 · grep 🔍 · fetch 🦉 · task 🪄 · plan 📜).
+- **Per-mood faces.** The pet's face changes with the work — eyes glance **up**
+  while thinking, **narrow** with focus while working, and **close** while
+  asleep — on top of a mood colour-grade and distinct flight motion.
+- **Per-tool spellwork.** The wand/broom glow colour and a floating prop change
+  per tool (edit ✍️ · read 📖 · bash 🧪 · grep 🔍 · fetch 🦉 · task 🪄 · plan 📜).
 - **Auto wake / sleep.** Wakes the moment opencode connects (heartbeat), stays
   awake while it runs, naps when it disconnects.
 - **Stays put & draggable.** Sits where you leave him; drag to reposition
@@ -28,9 +31,7 @@ Think of it as a tiny, glanceable "what is my agent doing right now?" companion.
 - **Sound, sizing, and a right-click menu.** Completion chime (mutable), four
   sizes, toggle the log, reset position, quit.
 
-| Working | Done | Sleeping |
-| --- | --- | --- |
-| ![working](assets/working.png) | ![happy](assets/happy.png) | ![sleeping](assets/sleeping.png) |
+![Scrybe pet moods: idle, thinking, working, sleeping](assets/modes.png)
 
 ## How it works
 
@@ -43,19 +44,19 @@ opencode ──(plugin)──► ~/.cache/opencode-pet/state.json ──(watch)�
   streaming reasoning/response, and writes it (throttled) to a small state file.
   It also pulses a heartbeat and launches the overlay.
 - **`app/`** — a transparent, always-on-top Electron window. The character is a
-  raster sprite (`app/renderer/sprite.png`) animated with CSS; moods are carried
-  by flight motion and overlays. Click-through everywhere except the character
-  itself.
+  raster sprite (`app/renderer/sprite.png`, plus `sprite-thinking.png`,
+  `sprite-working.png`, and `sprite-sleeping.png` for the per-mood faces)
+  animated with CSS; moods are carried by flight motion, colour-grade, and
+  overlays. Click-through everywhere except the character itself.
 
 The overlay and plugin talk only through files in `~/.cache/opencode-pet/`, so
 there are no ports and nothing to configure.
 
-> **Character art is not bundled.** `app/renderer/sprite.png` is intentionally
-> git-ignored (bring your own art). Drop any square, transparent-background PNG
-> there and restart the overlay. For per-mood art, add
-> `sprite-thinking.png`, `sprite-working.png`, and/or `sprite-sleeping.png`
-> alongside it — each is used for that state, falling back to `sprite.png` when
-> absent.
+> **Swapping the art.** The character lives in `app/renderer/` as `sprite.png`
+> plus `sprite-thinking.png`, `sprite-working.png`, and `sprite-sleeping.png`
+> (each used for that state, falling back to `sprite.png` when absent). Replace
+> any of them with your own square, transparent-background PNG and restart the
+> overlay.
 
 ## Install
 
@@ -93,7 +94,7 @@ session. (Plugins load only at startup, so restart after any change.)
 
 | Variable                   | Effect                                                     |
 | -------------------------- | ---------------------------------------------------------- |
-| `OPENCODE_PET_DIR`         | Path to this checkout (auto-detected if `~/opencode-pet` or `~/opencode-pet`) |
+| `OPENCODE_PET_DIR`         | Path to this checkout (auto-detected if `~/opencode-pet` or `~/opencode-scrybe`) |
 | `OPENCODE_PET_NO_LAUNCH=1` | Don't auto-launch the overlay from the plugin              |
 
 Runtime files (in `~/.cache/opencode-pet/`): `state.json` (current relay),
@@ -116,7 +117,9 @@ Issues and PRs are welcome. The code is deliberately small and dependency-light
 
 ## Notice
 
-The character is original fan-style pixel/vector art of a generic "wizard on a
-broom" and is **not affiliated with, endorsed by, or associated with** Warner
-Bros., J.K. Rowling, or the Harry Potter franchise. All related trademarks
-belong to their respective owners.
+The bundled character art is fan art of a well-known wizard-on-a-broom
+character. This project is **not affiliated with, endorsed by, or associated
+with** Warner Bros., J.K. Rowling, or the Harry Potter franchise, and is shared
+for non-commercial, personal use only. All related trademarks and copyrights
+belong to their respective owners. Swap in your own artwork (see **Swapping the
+art**) if you prefer.

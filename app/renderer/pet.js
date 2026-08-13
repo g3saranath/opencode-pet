@@ -31,12 +31,12 @@ const TOOL_LOOK = {
 const ALL_TOOL_CLASSES = Object.keys(TOOL_LOOK).map((t) => "tool-" + t);
 
 const STATE_LOOK = {
-  thinking: ["\uD83D\uDCAD", "hmm\u2026"],
+  thinking: [null, ""],
   working:  ["\uD83E\uDE84", "casting"],
   waiting:  ["\u2753", "your call?"],
   happy:    ["\u2728", "done!"],
   error:    ["\uD83D\uDCA5", "uh oh"],
-  sleeping: ["\uD83D\uDCA4", ""],
+  sleeping: [null, ""],
   idle:     [null, ""],
 };
 
