@@ -50,7 +50,7 @@ The character itself changes with the work - not just a badge on top.
 - **Sound, sizing, and a right-click menu.** Completion chime (mutable), four
   sizes, toggle the log, reset position, quit.
 
-## 🛠 How it works
+## How it works
 
 ```
 opencode ──(plugin)──► ~/.cache/opencode-pet/state.json ──(watch)──► Electron overlay
