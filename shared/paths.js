@@ -1,6 +1,4 @@
 // Shared path + constant helpers for the opencode-pet Electron app.
-// (The opencode plugin re-implements this tiny logic standalone so it can stay
-// dependency-free, but the values MUST match what's here.)
 const os = require("os");
 const path = require("path");
 
@@ -9,15 +7,7 @@ const STATE_FILE = path.join(DIR, "state.json");
 const PID_FILE = path.join(DIR, "pet.pid");
 const HEARTBEAT_FILE = path.join(DIR, "heartbeat");
 
-// Valid pet states (kept in sync with plugin/pet.ts STATES).
-const STATES = [
-  "idle",
-  "thinking",
-  "working",
-  "waiting",
-  "happy",
-  "error",
-  "sleeping",
-];
+// Single source of truth for valid pet states — see shared/states.json
+const STATES = require("./states.json");
 
 module.exports = { DIR, STATE_FILE, PID_FILE, HEARTBEAT_FILE, STATES };

@@ -33,8 +33,40 @@ function resolveAppDir(): string {
 }
 const APP_DIR = resolveAppDir();
 
-type PetState =
-  | "idle" | "thinking" | "working" | "waiting" | "happy" | "error" | "sleeping";
+// Single source of truth for valid pet states — shared/states.json
+function loadStates(): string[] {
+  const candidates: string[] = [];
+  // 1. APP_DIR-relative (works when plugin is launched from installed location)
+  candidates.push(path.join(APP_DIR, "shared", "states.json"));
+  // 2. CWD-relative (works in repo checkout / tests)
+  candidates.push(path.join(process.cwd(), "shared", "states.json"));
+  // 3. Relative to this file (covers symlink / ESM / CJS loaders)
+  try {
+    // @ts-ignore — import.meta may not be available in all loaders
+    const url = (typeof import.meta !== "undefined" && (import.meta as any).url) ? (import.meta as any).url as string : null;
+    if (url) {
+      const filePath = decodeURIComponent(new URL(url).pathname);
+      // Windows: pathname is /D:/path — strip leading slash
+      const normalized = process.platform === "win32" && filePath.startsWith("/") ? filePath.slice(1) : filePath;
+      candidates.push(path.join(path.dirname(normalized), "..", "shared", "states.json"));
+    }
+  } catch {}
+  try {
+    const d = (typeof __dirname !== "undefined" ? __dirname : null) as string | null;
+    if (d) candidates.push(path.join(d, "..", "shared", "states.json"));
+  } catch {}
+  for (const p of candidates) {
+    try {
+      const raw = fs.readFileSync(p, "utf8");
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length > 0 && arr.every((s: unknown) => typeof s === "string")) return arr;
+    } catch {}
+  }
+  // Fallback: keep session alive if states.json is missing (e.g. stray dev checkout)
+  return ["idle", "thinking", "working", "waiting", "happy", "error", "sleeping"];
+}
+const STATES = loadStates() as unknown as readonly ["idle", "thinking", "working", "waiting", "happy", "error", "sleeping"];
+type PetState = (typeof STATES)[number];
 
 type FeedEntry = { seq: number; icon: string; text: string; kind: string; id?: string };
 
