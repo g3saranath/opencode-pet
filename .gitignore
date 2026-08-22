@@ -8,4 +8,4 @@ harry-potter-flying-broom.png
 .DS_Store
 
 # raw source art drops
-app/renderer/spite-*
+app/renderer/sprite-*
