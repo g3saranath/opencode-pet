@@ -6,6 +6,3 @@ harry-potter-flying-broom.png
 
 # macOS
 .DS_Store
-
-# raw source art drops
-app/renderer/sprite-*
