@@ -3,15 +3,8 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-
-// ---------------------------------------------------------------------------
-// Paths (MUST match shared/paths.js in the pet app)
-// ---------------------------------------------------------------------------
-const DIR = path.join(os.homedir(), ".cache", "opencode-pet");
-const STATE_FILE = path.join(DIR, "state.json");
-const TMP_FILE = path.join(DIR, "state.json.tmp");
-const PID_FILE = path.join(DIR, "pet.pid");
-const HEARTBEAT_FILE = path.join(DIR, "heartbeat");
+import { DIR, PID_FILE, HEARTBEAT_FILE } from "../shared/paths";
+import { createStateWriter, type PetState } from "../shared/state-protocol";
 
 // While opencode is connected the plugin pulses a heartbeat; the overlay stays
 // awake as long as it sees a recent pulse, and only sleeps once opencode is gone.
@@ -33,12 +26,8 @@ function resolveAppDir(): string {
 }
 const APP_DIR = resolveAppDir();
 
-type PetState =
-  | "idle" | "thinking" | "working" | "waiting" | "happy" | "error" | "sleeping";
-
 type FeedEntry = { seq: number; icon: string; text: string; kind: string; id?: string };
 
-let lastPayload = "";
 let activeTools = 0;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -144,22 +133,9 @@ function summarize(tool: string, args: any): string {
 }
 
 // ---------------------------------------------------------------------------
-// State writing (atomic)
+// State writing (atomic) — real implementation lives in shared/state-protocol.js
 // ---------------------------------------------------------------------------
-function writeState(state: PetState, extra: Record<string, unknown> = {}) {
-  const body = { state, ...extra, feed };
-  const dedupeKey = JSON.stringify(body);
-  if (dedupeKey === lastPayload) return;
-  lastPayload = dedupeKey;
-  const payload = JSON.stringify({ ...body, ts: Date.now() });
-  try {
-    fs.mkdirSync(DIR, { recursive: true });
-    fs.writeFileSync(TMP_FILE, payload);
-    fs.renameSync(TMP_FILE, STATE_FILE);
-  } catch {
-    /* best effort — never break the session over a pet */
-  }
-}
+const writeState = createStateWriter();
 
 // Immediate write (discrete events).
 function emit(state: PetState, extra: Record<string, unknown> = {}) {
@@ -169,7 +145,7 @@ function emit(state: PetState, extra: Record<string, unknown> = {}) {
     clearTimeout(flushTimer);
     flushTimer = undefined;
   }
-  writeState(state, extra);
+  writeState(state, extra, feed);
 }
 
 // Coalesced write (streaming deltas) — at most one every THROTTLE_MS.
@@ -179,7 +155,7 @@ function emitThrottled(state: PetState, extra: Record<string, unknown> = {}) {
   if (flushTimer) return;
   flushTimer = setTimeout(() => {
     flushTimer = undefined;
-    writeState(pendingState, pendingExtra);
+    writeState(pendingState, pendingExtra, feed);
   }, THROTTLE_MS);
 }
 

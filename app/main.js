@@ -3,7 +3,8 @@
 const { app, BrowserWindow, screen, globalShortcut, ipcMain, Menu } = require("electron");
 const fs = require("fs");
 const path = require("path");
-const { DIR, STATE_FILE, PID_FILE, HEARTBEAT_FILE, STATES } = require("../shared/paths");
+const { DIR, PID_FILE, HEARTBEAT_FILE, STATES } = require("../shared/paths");
+const { readState } = require("../shared/state-protocol");
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -294,19 +295,8 @@ function checkConnection() {
 }
 
 // ---------------------------------------------------------------------------
-// State file (written by the opencode plugin)
+// State file (written by the opencode plugin, read via shared/state-protocol)
 // ---------------------------------------------------------------------------
-function readState() {
-  try {
-    const raw = fs.readFileSync(STATE_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && STATES.includes(parsed.state)) return parsed;
-  } catch {
-    /* no state yet */
-  }
-  return { state: "idle" };
-}
-
 function pushState(payload) {
   if (!payload || !STATES.includes(payload.state)) return;
   lastState = payload.state;
