@@ -273,6 +273,14 @@ function checkConnection() {
   if (!win || win.isDestroyed()) return;
   const now = Date.now();
 
+  // Safety fallback: if we have been sleeping for 15s, quit even if the
+  // heartbeat still looks fresh (covers the case where dispose did not run
+  // and the heartbeat file still has a recent timestamp).
+  if (lastState === "sleeping" && sleepingSince && now - sleepingSince > 15000) {
+    app.quit();
+    return;
+  }
+
   let lastBeat = 0;
   try {
     lastBeat = parseInt(fs.readFileSync(HEARTBEAT_FILE, "utf8").trim(), 10) || 0;
@@ -379,8 +387,9 @@ app.whenReady().then(() => {
   setInterval(tick, FRAME_MS);
   setInterval(checkConnection, 3000);
 
-  // Quit the pet from anywhere.
-  globalShortcut.register("Control+Alt+P", () => app.quit());
+  // Quit the pet from anywhere. Use Ctrl+Alt+Shift+P to avoid clashing
+  // with OpenCode's own Ctrl+Alt+P binding.
+  globalShortcut.register("Control+Alt+Shift+P", () => app.quit());
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

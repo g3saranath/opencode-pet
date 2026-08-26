@@ -73,5 +73,14 @@ describe("launcher path resolution", () => {
     assert.match(petTs, /windowsHide:\s*true/);
     assert.match(petTs, /child\.on\("error"/);
     assert.match(petTs, /resolveElectronBin/);
+    assert.match(petTs, /process\.kill\(pid\)/);
+  });
+
+  it("app uses non-conflicting pet quit shortcut", () => {
+    const mainJs = fs.readFileSync(
+      path.join(__dirname, "..", "app", "main.js"),
+      "utf8",
+    );
+    assert.match(mainJs, /Control\+Alt\+Shift\+P/);
   });
 });

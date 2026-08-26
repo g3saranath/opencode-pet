@@ -348,13 +348,19 @@ export const PetPlugin: Plugin = async () => {
       }
     },
 
-    // opencode is shutting down — stop the heartbeat and let the pet nap.
+    // opencode is shutting down — stop the heartbeat, let the pet nap,
+    // and close it instantly so the pet does not linger after Desktop quits.
     dispose: async () => {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       try {
         fs.unlinkSync(HEARTBEAT_FILE);
       } catch {}
       emit("sleeping");
+      // Best-effort instant close: the Electron app owns the pid file.
+      try {
+        const pid = parseInt(fs.readFileSync(PID_FILE, "utf8").trim(), 10);
+        if (pid) process.kill(pid);
+      } catch {}
     },
   };
 };
