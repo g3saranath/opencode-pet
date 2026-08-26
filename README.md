@@ -56,7 +56,8 @@ The character itself changes with the work - not just a badge on top.
 opencode ──(plugin)──► ~/.cache/opencode-pet/state.json ──(watch)──► Electron overlay
 ```
 
-- **`plugin/pet.ts`** - an opencode plugin (Node built-ins only). It hooks into
+- **`plugin/pet.ts`** - an opencode plugin (Node built-ins plus this repo's
+  `shared/` modules). It hooks into
   session / tool / message events, keeps a rolling relay of the recent steps and
   the streaming reasoning/response, and writes it (throttled) to a small state
   file. It also pulses a heartbeat and launches the overlay.
@@ -125,7 +126,8 @@ APIs, so Linux / Windows should work with minor tweaks - PRs welcome.
 ## Contributing
 
 Issues and PRs are welcome. The code is deliberately small and dependency-light
-(one Electron dependency for the app; the plugin uses only Node built-ins).
+(one Electron dependency for the app; the plugin uses only Node built-ins plus
+this repo's `shared/` modules - no npm packages at runtime).
 
 ## License
 
