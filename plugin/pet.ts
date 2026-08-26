@@ -197,23 +197,48 @@ function petAlreadyRunning(): boolean {
   }
 }
 
+// Resolve a spawnable Electron binary. On Windows the extensionless
+// .bin/electron shim is a shell script (#!/bin/sh) that fails with ENOENT
+// when spawned directly, and the .cmd shim creates a visible console window
+// unless hidden. Prefer the real binary in electron/dist.
+function resolveElectronBin(): { bin: string; shell: boolean } | undefined {
+  const isWin = process.platform === "win32";
+  const dist = path.join(
+    APP_DIR,
+    "node_modules",
+    "electron",
+    "dist",
+    isWin ? "electron.exe" : "electron",
+  );
+  if (fs.existsSync(dist)) return { bin: dist, shell: false };
+  const shim = path.join(APP_DIR, "node_modules", ".bin", isWin ? "electron.cmd" : "electron");
+  if (fs.existsSync(shim)) return { bin: shim, shell: isWin };
+  return undefined;
+}
+
 function launchPet() {
   if (process.env.OPENCODE_PET_NO_LAUNCH === "1") return;
   if (petAlreadyRunning()) return;
 
-  const electronBin = path.join(APP_DIR, "node_modules", ".bin", "electron");
-  if (!fs.existsSync(electronBin)) {
+  const resolved = resolveElectronBin();
+  if (!resolved) {
     // App not installed yet — skip silently; state file still gets written.
     return;
   }
 
   try {
-    const child = spawn(electronBin, ["."], {
+    const child = spawn(resolved.bin, ["."], {
       cwd: APP_DIR,
       detached: true,
       stdio: "ignore",
+      windowsHide: true,
+      shell: resolved.shell,
       env: { ...process.env },
     });
+    // Spawn failures surface as an async 'error' event. Without this handler
+    // an ENOENT (e.g. stale APP_DIR) would crash the opencode server and
+    // the desktop would show "TypeError: Failed to fetch".
+    child.on("error", () => {});
     child.unref();
     // Note: the Electron app writes its own real pid to PID_FILE on startup;
     // we don't record the short-lived npm shim pid here.

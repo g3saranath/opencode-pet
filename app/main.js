@@ -31,6 +31,7 @@ let config = { scale: 1.0, muted: false, feed: true };
 let win = null;
 let lastStateUpdate = Date.now();
 let lastState = "idle";
+let sleepingSince = 0;
 const startedAt = Date.now();
 
 // Drag state
@@ -286,11 +287,17 @@ function checkConnection() {
     now - startedAt < HEARTBEAT_TIMEOUT_MS;
 
   if (connected) {
+    sleepingSince = 0;
     // opencode is running: if we were napping, wake up.
     if (lastState === "sleeping") pushState({ state: "idle" });
   } else {
-    // opencode is gone: nap.
-    if (lastState !== "sleeping") pushState({ state: "sleeping" });
+    // opencode is gone: nap, then fully exit so a later desktop start
+    // can relaunch a fresh pet without an orphaned sleeping window.
+    if (lastState !== "sleeping") {
+      pushState({ state: "sleeping" });
+    } else if (sleepingSince && now - sleepingSince > 15000) {
+      app.quit();
+    }
   }
 }
 
@@ -299,8 +306,11 @@ function checkConnection() {
 // ---------------------------------------------------------------------------
 function pushState(payload) {
   if (!payload || !STATES.includes(payload.state)) return;
+  const wasSleeping = lastState === "sleeping";
   lastState = payload.state;
   lastStateUpdate = Date.now();
+  if (payload.state === "sleeping" && !wasSleeping) sleepingSince = Date.now();
+  if (payload.state !== "sleeping") sleepingSince = 0;
   if (win && !win.isDestroyed()) {
     win.webContents.send("pet:state", payload);
   }
