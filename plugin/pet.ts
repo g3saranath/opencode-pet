@@ -3,8 +3,8 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DIR, PID_FILE, HEARTBEAT_FILE } from "../shared/paths";
-import { createStateWriter, type PetState } from "../shared/state-protocol";
+import { DIR, PID_FILE, HEARTBEAT_FILE } from "../shared/paths.js";
+import { createStateWriter, type PetState } from "../shared/state-protocol.js";
 
 // While opencode is connected the plugin pulses a heartbeat; the overlay stays
 // awake as long as it sees a recent pulse, and only sleeps once opencode is gone.
