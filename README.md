@@ -5,9 +5,8 @@
 **A desktop pet for [opencode](https://opencode.ai) that _scries_ your session and _scribes_ it live.**
 
 A little wizard on a broom perches on top of your screen and shows what your
-agent is doing, in real time - streaming reasoning and replies, every tool call
-and its output, plans, permissions, and the final result. He reacts as work
-happens and dozes off when opencode isn't running.
+agent is doing, in real time - streaming reasoning and replies and every tool call
+with its output. He reacts as work happens and dozes off when opencode isn't running.
 
 <img src="assets/hero.png" width="330" alt="Scrybe Pet relaying a live opencode session" />
 
@@ -62,8 +61,8 @@ opencode ──(plugin)──► ~/.cache/opencode-pet/state.json ──(watch)�
   the streaming reasoning/response, and writes it (throttled) to a small state
   file. It also pulses a heartbeat and launches the overlay.
 - **`app/`** - a transparent, always-on-top Electron window. The character is a
-  raster sprite animated with CSS; each mood swaps the sprite and layers motion,
-  a colour-grade, and overlays. Click-through everywhere except the character.
+  raster sprite animated with CSS; each mood swaps the sprite and layers motion
+  and a colour-grade. Click-through everywhere except the character.
 
 The overlay and plugin talk only through files in `~/.cache/opencode-pet/`, so
 there are no ports and nothing to configure.
@@ -111,16 +110,16 @@ Runtime files live in `~/.cache/opencode-pet/`: `state.json` (current relay),
 `heartbeat` (connection pulse), `pet.pid` (overlay pid), `pos.json` (position),
 `config.json` (size / mute / log preferences).
 
-## For AI agents / Other IDEs
+## For AI agents and other IDEs
 
 Built for OpenCode, but the overlay is just a file watcher. Any agent or IDE
 can drive the wizard by writing the same two files in `~/.cache/opencode-pet/`:
 
-- `state.json` — `{ state, feed }` where `state` is one of
+- `state.json`: `{ state, feed }` where `state` is one of
   `idle | thinking | working | waiting | happy | error | sleeping` and `feed`
   is an array of `{ seq, icon, text, kind }`. See `shared/state-protocol.js`
   as the reference (atomic write via `state.json.tmp` rename, deduped, with `ts`).
-- `heartbeat` — `"<timestamp> <pid>"` updated every ~15 sec while the agent
+- `heartbeat`: `"<timestamp> <pid>"` updated every ~15 sec while the agent
   is alive. Delete it and write `state: sleeping` on shutdown so the pet
   naps and then quits.
 
@@ -133,7 +132,7 @@ writeState("working", { detail: "edit token.ts" },
   [{ seq: 1, icon: "\u270F\uFE0F", text: "edit token.ts", kind: "step" }]);
 ```
 
-No ports or extra config — just write the files and the wizard reacts. PRs for
+No ports or extra config. Just write the files and the wizard reacts. PRs for
 other adapters are welcome.
 
 ## Swapping the art
