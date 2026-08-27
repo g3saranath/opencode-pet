@@ -26,6 +26,15 @@ function resolveAppDir(): string {
 }
 const APP_DIR = resolveAppDir();
 
+// This pet is for official OpenCode (desktop / CLI). When running inside
+// other bundled hosts like OpenChamber's opencode, don't drive the pet
+// (prevents the pet staying alive after Desktop closes while openchamber
+// at 60851 keeps pulsing the same heartbeat file).
+function isOpenChamberHost(): boolean {
+  const exec = (process.execPath || "").toLowerCase();
+  return exec.includes("openchamber");
+}
+
 type FeedEntry = { seq: number; icon: string; text: string; kind: string; id?: string };
 
 let activeTools = 0;
@@ -78,12 +87,15 @@ function snippet(s: unknown, n: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Heartbeat — proof that opencode is alive & connected.
+// Heartbeat — proof that opencode is alive & connected. Includes the
+// server pid so the pet can tell which opencode instance is pulsing and
+// ignore stale heartbeats from other instances (e.g. openchamber).
 // ---------------------------------------------------------------------------
 function beat() {
+  if (isOpenChamberHost()) return;
   try {
     fs.mkdirSync(DIR, { recursive: true });
-    fs.writeFileSync(HEARTBEAT_FILE, String(Date.now()));
+    fs.writeFileSync(HEARTBEAT_FILE, `${Date.now()} ${process.pid}`);
   } catch {
     /* best effort */
   }
@@ -217,6 +229,7 @@ function resolveElectronBin(): { bin: string; shell: boolean } | undefined {
 }
 
 function launchPet() {
+  if (isOpenChamberHost()) return;
   if (process.env.OPENCODE_PET_NO_LAUNCH === "1") return;
   if (petAlreadyRunning()) return;
 
@@ -251,6 +264,11 @@ function launchPet() {
 // Plugin
 // ---------------------------------------------------------------------------
 export const PetPlugin: Plugin = async () => {
+  // This pet is for official OpenCode. Inside other hosts like OpenChamber,
+  // do nothing — prevents the pet staying alive after Desktop closes.
+  if (isOpenChamberHost()) {
+    return {};
+  }
   // Wake the pet the moment opencode connects.
   beat();
   logStep("\u2728", "connected", "meta");

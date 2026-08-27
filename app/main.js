@@ -282,16 +282,34 @@ function checkConnection() {
   }
 
   let lastBeat = 0;
+  let heartbeatPid = 0;
   try {
-    lastBeat = parseInt(fs.readFileSync(HEARTBEAT_FILE, "utf8").trim(), 10) || 0;
+    const raw = fs.readFileSync(HEARTBEAT_FILE, "utf8").trim();
+    const parts = raw.split(/\s+/);
+    lastBeat = parseInt(parts[0], 10) || 0;
+    heartbeatPid = parseInt(parts[1], 10) || 0;
   } catch {
     /* no heartbeat file */
+  }
+
+  // If heartbeat includes a pid, verify that process is still alive.
+  // This makes the pet Desktop-specific: when Desktop's server pid dies,
+  // the pet goes sleeping even if another server (e.g. openchamber at
+  // 60851) is still writing a fresh timestamp with its own pid.
+  let pidAlive = true;
+  if (heartbeatPid) {
+    try {
+      process.kill(heartbeatPid, 0);
+      pidAlive = true;
+    } catch {
+      pidAlive = false;
+    }
   }
 
   // Grace window on startup so the pet doesn't flash "sleeping" before the
   // first heartbeat arrives.
   const connected =
-    now - lastBeat < HEARTBEAT_TIMEOUT_MS ||
+    (pidAlive && now - lastBeat < HEARTBEAT_TIMEOUT_MS) ||
     now - startedAt < HEARTBEAT_TIMEOUT_MS;
 
   if (connected) {
