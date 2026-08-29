@@ -5,6 +5,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { DIR, PID_FILE, HEARTBEAT_FILE } from "../shared/paths.js";
 import { createStateWriter, type PetState } from "../shared/state-protocol.js";
+import { resolveElectronBin, hasElectron } from "../shared/electron-bin.js";
+import { isProcessAlive } from "../shared/process-alive.js";
 
 // While opencode is connected the plugin pulses a heartbeat; the overlay stays
 // awake as long as it sees a recent pulse, and only sleeps once opencode is gone.
@@ -20,20 +22,11 @@ function resolveAppDir(): string {
     path.join(os.homedir(), "opencode-pet"),
   ].filter(Boolean) as string[];
   for (const d of candidates) {
-    if (fs.existsSync(path.join(d, "node_modules", ".bin", "electron"))) return d;
+    if (hasElectron(d)) return d;
   }
   return candidates[0] || path.join(os.homedir(), "opencode-familiar");
 }
 const APP_DIR = resolveAppDir();
-
-// This pet is for official OpenCode (desktop / CLI). When running inside
-// other bundled hosts like OpenChamber's opencode, don't drive the pet
-// (prevents the pet staying alive after Desktop closes while openchamber
-// at 60851 keeps pulsing the same heartbeat file).
-function isOpenChamberHost(): boolean {
-  const exec = (process.execPath || "").toLowerCase();
-  return exec.includes("openchamber");
-}
 
 type FeedEntry = { seq: number; icon: string; text: string; kind: string; id?: string };
 
@@ -87,12 +80,11 @@ function snippet(s: unknown, n: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Heartbeat — proof that opencode is alive & connected. Includes the
-// server pid so the pet can tell which opencode instance is pulsing and
-// ignore stale heartbeats from other instances (e.g. openchamber).
+// Heartbeat — proof that opencode is alive & connected. Includes this
+// server's pid so the overlay can tell which opencode instance is pulsing
+// and ignore heartbeats from an instance that has since exited.
 // ---------------------------------------------------------------------------
 function beat() {
-  if (isOpenChamberHost()) return;
   try {
     fs.mkdirSync(DIR, { recursive: true });
     fs.writeFileSync(HEARTBEAT_FILE, `${Date.now()} ${process.pid}`);
@@ -198,42 +190,30 @@ function relay(part: any) {
 // ---------------------------------------------------------------------------
 // Launch the Electron overlay (once)
 // ---------------------------------------------------------------------------
-function petAlreadyRunning(): boolean {
+function readPetPid(): number {
   try {
     const pid = parseInt(fs.readFileSync(PID_FILE, "utf8").trim(), 10);
-    if (!pid) return false;
-    process.kill(pid, 0); // throws if the process is gone
-    return true;
+    return Number.isInteger(pid) && pid > 0 ? pid : 0;
   } catch {
-    return false;
+    return 0;
   }
 }
 
-// Resolve a spawnable Electron binary. On Windows the extensionless
-// .bin/electron shim is a shell script (#!/bin/sh) that fails with ENOENT
-// when spawned directly, and the .cmd shim creates a visible console window
-// unless hidden. Prefer the real binary in electron/dist.
-function resolveElectronBin(): { bin: string; shell: boolean } | undefined {
-  const isWin = process.platform === "win32";
-  const dist = path.join(
-    APP_DIR,
-    "node_modules",
-    "electron",
-    "dist",
-    isWin ? "electron.exe" : "electron",
-  );
-  if (fs.existsSync(dist)) return { bin: dist, shell: false };
-  const shim = path.join(APP_DIR, "node_modules", ".bin", isWin ? "electron.cmd" : "electron");
-  if (fs.existsSync(shim)) return { bin: shim, shell: isWin };
-  return undefined;
+function petAlreadyRunning(): boolean {
+  return isProcessAlive(readPetPid());
+}
+
+// Resolve a spawnable Electron binary — see shared/electron-bin.js for why
+// the packaged dist binary is preferred over the npm shim on Windows.
+function appElectronBin() {
+  return resolveElectronBin(APP_DIR);
 }
 
 function launchPet() {
-  if (isOpenChamberHost()) return;
   if (process.env.OPENCODE_PET_NO_LAUNCH === "1") return;
   if (petAlreadyRunning()) return;
 
-  const resolved = resolveElectronBin();
+  const resolved = appElectronBin();
   if (!resolved) {
     // App not installed yet — skip silently; state file still gets written.
     return;
@@ -264,11 +244,6 @@ function launchPet() {
 // Plugin
 // ---------------------------------------------------------------------------
 export const PetPlugin: Plugin = async () => {
-  // This pet is for official OpenCode. Inside other hosts like OpenChamber,
-  // do nothing — prevents the pet staying alive after Desktop closes.
-  if (isOpenChamberHost()) {
-    return {};
-  }
   // Wake the pet the moment opencode connects.
   beat();
   logStep("\u2728", "connected", "meta");
@@ -375,10 +350,25 @@ export const PetPlugin: Plugin = async () => {
       } catch {}
       emit("sleeping");
       // Best-effort instant close: the Electron app owns the pid file.
-      try {
-        const pid = parseInt(fs.readFileSync(PID_FILE, "utf8").trim(), 10);
-        if (pid) process.kill(pid);
-      } catch {}
+      //
+      // Only signal a pid we have confirmed is still alive. A stale pet.pid
+      // (pet crashed, pid recycled by the OS) would otherwise make us
+      // terminate an unrelated process. The liveness probe is inherently
+      // racy, but it narrows the window to effectively nothing and removes
+      // the common stale-file case.
+      const pid = readPetPid();
+      if (pid && isProcessAlive(pid)) {
+        try {
+          process.kill(pid);
+        } catch {
+          /* already exited between the probe and the signal */
+        }
+        // The pet normally removes its own pid file on exit; clean up here
+        // too so a failed shutdown cannot strand a stale pid.
+        try {
+          fs.unlinkSync(PID_FILE);
+        } catch {}
+      }
     },
   };
 };

@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { DIR, PID_FILE, HEARTBEAT_FILE, STATES } = require("../shared/paths");
 const { readState } = require("../shared/state-protocol");
+const { isProcessAlive } = require("../shared/process-alive");
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -16,6 +17,9 @@ const FRAME_MS = 16;
 // The pet sleeps only when opencode's heartbeat goes stale (i.e. it's not
 // running/connected) — not merely because you've been quiet for a while.
 const HEARTBEAT_TIMEOUT_MS = 45 * 1000;
+// Once asleep, wait this long before exiting entirely, so a brief opencode
+// restart wakes the existing pet instead of leaving an orphaned window.
+const SLEEP_QUIT_MS = 15 * 1000;
 const POS_FILE = path.join(DIR, "pos.json");
 const CONFIG_FILE = path.join(DIR, "config.json");
 
@@ -273,14 +277,6 @@ function checkConnection() {
   if (!win || win.isDestroyed()) return;
   const now = Date.now();
 
-  // Safety fallback: if we have been sleeping for 15s, quit even if the
-  // heartbeat still looks fresh (covers the case where dispose did not run
-  // and the heartbeat file still has a recent timestamp).
-  if (lastState === "sleeping" && sleepingSince && now - sleepingSince > 15000) {
-    app.quit();
-    return;
-  }
-
   let lastBeat = 0;
   let heartbeatPid = 0;
   try {
@@ -292,19 +288,12 @@ function checkConnection() {
     /* no heartbeat file */
   }
 
-  // If heartbeat includes a pid, verify that process is still alive.
-  // This makes the pet Desktop-specific: when Desktop's server pid dies,
-  // the pet goes sleeping even if another server (e.g. openchamber at
-  // 60851) is still writing a fresh timestamp with its own pid.
-  let pidAlive = true;
-  if (heartbeatPid) {
-    try {
-      process.kill(heartbeatPid, 0);
-      pidAlive = true;
-    } catch {
-      pidAlive = false;
-    }
-  }
+  // If the heartbeat carries a pid, require that process to still be alive.
+  // This pins the pet to the opencode instance that actually launched it, so
+  // a second server writing fresh timestamps with its own pid cannot keep the
+  // pet awake after its owner exits. Heartbeats without a pid (older plugin)
+  // fall back to the timestamp alone.
+  const pidAlive = heartbeatPid ? isProcessAlive(heartbeatPid) : true;
 
   // Grace window on startup so the pet doesn't flash "sleeping" before the
   // first heartbeat arrives.
@@ -316,14 +305,15 @@ function checkConnection() {
     sleepingSince = 0;
     // opencode is running: if we were napping, wake up.
     if (lastState === "sleeping") pushState({ state: "idle" });
-  } else {
-    // opencode is gone: nap, then fully exit so a later desktop start
-    // can relaunch a fresh pet without an orphaned sleeping window.
-    if (lastState !== "sleeping") {
-      pushState({ state: "sleeping" });
-    } else if (sleepingSince && now - sleepingSince > 15000) {
-      app.quit();
-    }
+    return;
+  }
+
+  // opencode is gone: nap, then fully exit so a later opencode start can
+  // relaunch a fresh pet without an orphaned sleeping window hanging around.
+  if (lastState !== "sleeping") {
+    pushState({ state: "sleeping" });
+  } else if (sleepingSince && now - sleepingSince > SLEEP_QUIT_MS) {
+    app.quit();
   }
 }
 

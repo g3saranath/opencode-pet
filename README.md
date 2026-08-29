@@ -5,8 +5,9 @@
 **A desktop pet for [opencode](https://opencode.ai) that _scries_ your session and _scribes_ it live.**
 
 A little wizard on a broom perches on top of your screen and shows what your
-agent is doing, in real time - streaming reasoning and replies and every tool call
-with its output. He reacts as work happens and dozes off when opencode isn't running.
+agent is doing, in real time - streaming reasoning and replies, every tool call
+and its output, plans, permissions, and the final result. He reacts as work
+happens and dozes off when opencode isn't running.
 
 <img src="assets/hero.png" width="330" alt="Scrybe Pet relaying a live opencode session" />
 
@@ -61,8 +62,8 @@ opencode ──(plugin)──► ~/.cache/opencode-pet/state.json ──(watch)�
   the streaming reasoning/response, and writes it (throttled) to a small state
   file. It also pulses a heartbeat and launches the overlay.
 - **`app/`** - a transparent, always-on-top Electron window. The character is a
-  raster sprite animated with CSS; each mood swaps the sprite and layers motion
-  and a colour-grade. Click-through everywhere except the character.
+  raster sprite animated with CSS; each mood swaps the sprite and layers motion,
+  a colour-grade, and overlays. Click-through everywhere except the character.
 
 The overlay and plugin talk only through files in `~/.cache/opencode-pet/`, so
 there are no ports and nothing to configure.
@@ -83,6 +84,10 @@ ln -sf ~/opencode-pet/plugin/pet.ts ~/.config/opencode/plugin/pet.ts
 
 Then **restart opencode**. Scrybe appears automatically and starts relaying the
 session. (Plugins load only at startup, so restart after any change.)
+
+> **Symlink, don't copy.** `plugin/pet.ts` imports this repo's `shared/`
+> modules, so it must resolve back to your clone. `ln -s` (as above) works;
+> copying `pet.ts` into `~/.config/opencode/plugin/` will fail to load.
 
 > Prefer not to auto-launch on session start? Set `OPENCODE_PET_NO_LAUNCH=1` and
 > run the overlay yourself with `npm start`.
@@ -123,14 +128,18 @@ can drive the wizard by writing the same two files in `~/.cache/opencode-pet/`:
   is alive. Delete it and write `state: sleeping` on shutdown so the pet
   naps and then quits.
 
-Minimal example for Antigravity IDE (or any custom agent):
+Minimal example (adjust the path to point at your clone):
 
 ```js
-const { createStateWriter } = require("./shared/state-protocol");
+const { createStateWriter } = require("/path/to/opencode-pet/shared/state-protocol");
 const writeState = createStateWriter();
 writeState("working", { detail: "edit token.ts" },
   [{ seq: 1, icon: "\u270F\uFE0F", text: "edit token.ts", kind: "step" }]);
 ```
+
+The `heartbeat` pid is used to tell whose pulse it is: the overlay checks that
+the process is still alive, so a crashed agent can't keep the pet awake by
+leaving a fresh timestamp behind. Write your own `process.pid` there.
 
 No ports or extra config. Just write the files and the wizard reacts. PRs for
 other adapters are welcome.
