@@ -56,7 +56,8 @@ The character itself changes with the work - not just a badge on top.
 opencode ──(plugin)──► ~/.cache/opencode-pet/state.json ──(watch)──► Electron overlay
 ```
 
-- **`plugin/pet.ts`** - an opencode plugin (Node built-ins only). It hooks into
+- **`plugin/pet.ts`** - an opencode plugin (Node built-ins plus this repo's
+  `shared/` modules). It hooks into
   session / tool / message events, keeps a rolling relay of the recent steps and
   the streaming reasoning/response, and writes it (throttled) to a small state
   file. It also pulses a heartbeat and launches the overlay.
@@ -84,6 +85,10 @@ ln -sf ~/opencode-pet/plugin/pet.ts ~/.config/opencode/plugin/pet.ts
 Then **restart opencode**. Scrybe appears automatically and starts relaying the
 session. (Plugins load only at startup, so restart after any change.)
 
+> **Symlink, don't copy.** `plugin/pet.ts` imports this repo's `shared/`
+> modules, so it must resolve back to your clone. `ln -s` (as above) works;
+> copying `pet.ts` into `~/.config/opencode/plugin/` will fail to load.
+
 > Prefer not to auto-launch on session start? Set `OPENCODE_PET_NO_LAUNCH=1` and
 > run the overlay yourself with `npm start`.
 
@@ -96,7 +101,7 @@ session. (Plugins load only at startup, so restart after any change.)
 | Resize        | Right-click ▸ Size ▸ Small / Medium / Large / Huge      |
 | Mute sounds   | Right-click ▸ Mute sounds                               |
 | Show/hide log | Right-click ▸ Show activity log                         |
-| Quit          | Right-click ▸ Quit, or `Ctrl`+`Alt`+`P`                 |
+| Quit          | Right-click ▸ Quit, or `Ctrl`+`Alt`+`Shift`+`P`         |
 | Run manually  | `npm start`                                             |
 
 ## Configuration
@@ -109,6 +114,35 @@ session. (Plugins load only at startup, so restart after any change.)
 Runtime files live in `~/.cache/opencode-pet/`: `state.json` (current relay),
 `heartbeat` (connection pulse), `pet.pid` (overlay pid), `pos.json` (position),
 `config.json` (size / mute / log preferences).
+
+## For AI agents and other IDEs
+
+Built for OpenCode, but the overlay is just a file watcher. Any agent or IDE
+can drive the wizard by writing the same two files in `~/.cache/opencode-pet/`:
+
+- `state.json`: `{ state, feed }` where `state` is one of
+  `idle | thinking | working | waiting | happy | error | sleeping` and `feed`
+  is an array of `{ seq, icon, text, kind }`. See `shared/state-protocol.js`
+  as the reference (atomic write via `state.json.tmp` rename, deduped, with `ts`).
+- `heartbeat`: `"<timestamp> <pid>"` updated every ~15 sec while the agent
+  is alive. Delete it and write `state: sleeping` on shutdown so the pet
+  naps and then quits.
+
+Minimal example (adjust the path to point at your clone):
+
+```js
+const { createStateWriter } = require("/path/to/opencode-pet/shared/state-protocol");
+const writeState = createStateWriter();
+writeState("working", { detail: "edit token.ts" },
+  [{ seq: 1, icon: "\u270F\uFE0F", text: "edit token.ts", kind: "step" }]);
+```
+
+The `heartbeat` pid is used to tell whose pulse it is: the overlay checks that
+the process is still alive, so a crashed agent can't keep the pet awake by
+leaving a fresh timestamp behind. Write your own `process.pid` there.
+
+No ports or extra config. Just write the files and the wizard reacts. PRs for
+other adapters are welcome.
 
 ## Swapping the art
 
@@ -125,7 +159,8 @@ APIs, so Linux / Windows should work with minor tweaks - PRs welcome.
 ## Contributing
 
 Issues and PRs are welcome. The code is deliberately small and dependency-light
-(one Electron dependency for the app; the plugin uses only Node built-ins).
+(one Electron dependency for the app; the plugin uses only Node built-ins plus
+this repo's `shared/` modules - no npm packages at runtime).
 
 ## License
 

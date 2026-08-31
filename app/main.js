@@ -3,7 +3,9 @@
 const { app, BrowserWindow, screen, globalShortcut, ipcMain, Menu } = require("electron");
 const fs = require("fs");
 const path = require("path");
-const { DIR, STATE_FILE, PID_FILE, HEARTBEAT_FILE, STATES } = require("../shared/paths");
+const { DIR, PID_FILE, HEARTBEAT_FILE, STATES } = require("../shared/paths");
+const { readState } = require("../shared/state-protocol");
+const { isProcessAlive } = require("../shared/process-alive");
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -15,6 +17,9 @@ const FRAME_MS = 16;
 // The pet sleeps only when opencode's heartbeat goes stale (i.e. it's not
 // running/connected) — not merely because you've been quiet for a while.
 const HEARTBEAT_TIMEOUT_MS = 45 * 1000;
+// Once asleep, wait this long before exiting entirely, so a brief opencode
+// restart wakes the existing pet instead of leaving an orphaned window.
+const SLEEP_QUIT_MS = 15 * 1000;
 const POS_FILE = path.join(DIR, "pos.json");
 const CONFIG_FILE = path.join(DIR, "config.json");
 
@@ -30,6 +35,7 @@ let config = { scale: 1.0, muted: false, feed: true };
 let win = null;
 let lastStateUpdate = Date.now();
 let lastState = "idle";
+let sleepingSince = 0;
 const startedAt = Date.now();
 
 // Drag state
@@ -272,45 +278,55 @@ function checkConnection() {
   const now = Date.now();
 
   let lastBeat = 0;
+  let heartbeatPid = 0;
   try {
-    lastBeat = parseInt(fs.readFileSync(HEARTBEAT_FILE, "utf8").trim(), 10) || 0;
+    const raw = fs.readFileSync(HEARTBEAT_FILE, "utf8").trim();
+    const parts = raw.split(/\s+/);
+    lastBeat = parseInt(parts[0], 10) || 0;
+    heartbeatPid = parseInt(parts[1], 10) || 0;
   } catch {
     /* no heartbeat file */
   }
 
+  // If the heartbeat carries a pid, require that process to still be alive.
+  // This pins the pet to the opencode instance that actually launched it, so
+  // a second server writing fresh timestamps with its own pid cannot keep the
+  // pet awake after its owner exits. Heartbeats without a pid (older plugin)
+  // fall back to the timestamp alone.
+  const pidAlive = heartbeatPid ? isProcessAlive(heartbeatPid) : true;
+
   // Grace window on startup so the pet doesn't flash "sleeping" before the
   // first heartbeat arrives.
   const connected =
-    now - lastBeat < HEARTBEAT_TIMEOUT_MS ||
+    (pidAlive && now - lastBeat < HEARTBEAT_TIMEOUT_MS) ||
     now - startedAt < HEARTBEAT_TIMEOUT_MS;
 
   if (connected) {
+    sleepingSince = 0;
     // opencode is running: if we were napping, wake up.
     if (lastState === "sleeping") pushState({ state: "idle" });
-  } else {
-    // opencode is gone: nap.
-    if (lastState !== "sleeping") pushState({ state: "sleeping" });
+    return;
+  }
+
+  // opencode is gone: nap, then fully exit so a later opencode start can
+  // relaunch a fresh pet without an orphaned sleeping window hanging around.
+  if (lastState !== "sleeping") {
+    pushState({ state: "sleeping" });
+  } else if (sleepingSince && now - sleepingSince > SLEEP_QUIT_MS) {
+    app.quit();
   }
 }
 
 // ---------------------------------------------------------------------------
-// State file (written by the opencode plugin)
+// State file (written by the opencode plugin, read via shared/state-protocol)
 // ---------------------------------------------------------------------------
-function readState() {
-  try {
-    const raw = fs.readFileSync(STATE_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && STATES.includes(parsed.state)) return parsed;
-  } catch {
-    /* no state yet */
-  }
-  return { state: "idle" };
-}
-
 function pushState(payload) {
   if (!payload || !STATES.includes(payload.state)) return;
+  const wasSleeping = lastState === "sleeping";
   lastState = payload.state;
   lastStateUpdate = Date.now();
+  if (payload.state === "sleeping" && !wasSleeping) sleepingSince = Date.now();
+  if (payload.state !== "sleeping") sleepingSince = 0;
   if (win && !win.isDestroyed()) {
     win.webContents.send("pet:state", payload);
   }
@@ -379,8 +395,9 @@ app.whenReady().then(() => {
   setInterval(tick, FRAME_MS);
   setInterval(checkConnection, 3000);
 
-  // Quit the pet from anywhere.
-  globalShortcut.register("Control+Alt+P", () => app.quit());
+  // Quit the pet from anywhere. Use Ctrl+Alt+Shift+P to avoid clashing
+  // with OpenCode's own Ctrl+Alt+P binding.
+  globalShortcut.register("Control+Alt+Shift+P", () => app.quit());
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

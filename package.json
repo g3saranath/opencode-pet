@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "electron .",
-    "scrybe": "electron ."
+    "scrybe": "electron .",
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "opencode",

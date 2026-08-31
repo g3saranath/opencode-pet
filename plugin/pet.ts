@@ -3,15 +3,10 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-
-// ---------------------------------------------------------------------------
-// Paths (MUST match shared/paths.js in the pet app)
-// ---------------------------------------------------------------------------
-const DIR = path.join(os.homedir(), ".cache", "opencode-pet");
-const STATE_FILE = path.join(DIR, "state.json");
-const TMP_FILE = path.join(DIR, "state.json.tmp");
-const PID_FILE = path.join(DIR, "pet.pid");
-const HEARTBEAT_FILE = path.join(DIR, "heartbeat");
+import { DIR, PID_FILE, HEARTBEAT_FILE } from "../shared/paths.js";
+import { createStateWriter, type PetState } from "../shared/state-protocol.js";
+import { resolveElectronBin, hasElectron } from "../shared/electron-bin.js";
+import { isProcessAlive } from "../shared/process-alive.js";
 
 // While opencode is connected the plugin pulses a heartbeat; the overlay stays
 // awake as long as it sees a recent pulse, and only sleeps once opencode is gone.
@@ -27,18 +22,14 @@ function resolveAppDir(): string {
     path.join(os.homedir(), "opencode-pet"),
   ].filter(Boolean) as string[];
   for (const d of candidates) {
-    if (fs.existsSync(path.join(d, "node_modules", ".bin", "electron"))) return d;
+    if (hasElectron(d)) return d;
   }
   return candidates[0] || path.join(os.homedir(), "opencode-familiar");
 }
 const APP_DIR = resolveAppDir();
 
-type PetState =
-  | "idle" | "thinking" | "working" | "waiting" | "happy" | "error" | "sleeping";
-
 type FeedEntry = { seq: number; icon: string; text: string; kind: string; id?: string };
 
-let lastPayload = "";
 let activeTools = 0;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -89,12 +80,14 @@ function snippet(s: unknown, n: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Heartbeat — proof that opencode is alive & connected.
+// Heartbeat — proof that opencode is alive & connected. Includes this
+// server's pid so the overlay can tell which opencode instance is pulsing
+// and ignore heartbeats from an instance that has since exited.
 // ---------------------------------------------------------------------------
 function beat() {
   try {
     fs.mkdirSync(DIR, { recursive: true });
-    fs.writeFileSync(HEARTBEAT_FILE, String(Date.now()));
+    fs.writeFileSync(HEARTBEAT_FILE, `${Date.now()} ${process.pid}`);
   } catch {
     /* best effort */
   }
@@ -144,22 +137,9 @@ function summarize(tool: string, args: any): string {
 }
 
 // ---------------------------------------------------------------------------
-// State writing (atomic)
+// State writing (atomic) — real implementation lives in shared/state-protocol.js
 // ---------------------------------------------------------------------------
-function writeState(state: PetState, extra: Record<string, unknown> = {}) {
-  const body = { state, ...extra, feed };
-  const dedupeKey = JSON.stringify(body);
-  if (dedupeKey === lastPayload) return;
-  lastPayload = dedupeKey;
-  const payload = JSON.stringify({ ...body, ts: Date.now() });
-  try {
-    fs.mkdirSync(DIR, { recursive: true });
-    fs.writeFileSync(TMP_FILE, payload);
-    fs.renameSync(TMP_FILE, STATE_FILE);
-  } catch {
-    /* best effort — never break the session over a pet */
-  }
-}
+const writeState = createStateWriter();
 
 // Immediate write (discrete events).
 function emit(state: PetState, extra: Record<string, unknown> = {}) {
@@ -169,7 +149,7 @@ function emit(state: PetState, extra: Record<string, unknown> = {}) {
     clearTimeout(flushTimer);
     flushTimer = undefined;
   }
-  writeState(state, extra);
+  writeState(state, extra, feed);
 }
 
 // Coalesced write (streaming deltas) — at most one every THROTTLE_MS.
@@ -179,7 +159,7 @@ function emitThrottled(state: PetState, extra: Record<string, unknown> = {}) {
   if (flushTimer) return;
   flushTimer = setTimeout(() => {
     flushTimer = undefined;
-    writeState(pendingState, pendingExtra);
+    writeState(pendingState, pendingExtra, feed);
   }, THROTTLE_MS);
 }
 
@@ -210,34 +190,48 @@ function relay(part: any) {
 // ---------------------------------------------------------------------------
 // Launch the Electron overlay (once)
 // ---------------------------------------------------------------------------
-function petAlreadyRunning(): boolean {
+function readPetPid(): number {
   try {
     const pid = parseInt(fs.readFileSync(PID_FILE, "utf8").trim(), 10);
-    if (!pid) return false;
-    process.kill(pid, 0); // throws if the process is gone
-    return true;
+    return Number.isInteger(pid) && pid > 0 ? pid : 0;
   } catch {
-    return false;
+    return 0;
   }
+}
+
+function petAlreadyRunning(): boolean {
+  return isProcessAlive(readPetPid());
+}
+
+// Resolve a spawnable Electron binary — see shared/electron-bin.js for why
+// the packaged dist binary is preferred over the npm shim on Windows.
+function appElectronBin() {
+  return resolveElectronBin(APP_DIR);
 }
 
 function launchPet() {
   if (process.env.OPENCODE_PET_NO_LAUNCH === "1") return;
   if (petAlreadyRunning()) return;
 
-  const electronBin = path.join(APP_DIR, "node_modules", ".bin", "electron");
-  if (!fs.existsSync(electronBin)) {
+  const resolved = appElectronBin();
+  if (!resolved) {
     // App not installed yet — skip silently; state file still gets written.
     return;
   }
 
   try {
-    const child = spawn(electronBin, ["."], {
+    const child = spawn(resolved.bin, ["."], {
       cwd: APP_DIR,
       detached: true,
       stdio: "ignore",
+      windowsHide: true,
+      shell: resolved.shell,
       env: { ...process.env },
     });
+    // Spawn failures surface as an async 'error' event. Without this handler
+    // an ENOENT (e.g. stale APP_DIR) would crash the opencode server and
+    // the desktop would show "TypeError: Failed to fetch".
+    child.on("error", () => {});
     child.unref();
     // Note: the Electron app writes its own real pid to PID_FILE on startup;
     // we don't record the short-lived npm shim pid here.
@@ -347,13 +341,34 @@ export const PetPlugin: Plugin = async () => {
       }
     },
 
-    // opencode is shutting down — stop the heartbeat and let the pet nap.
+    // opencode is shutting down — stop the heartbeat, let the pet nap,
+    // and close it instantly so the pet does not linger after Desktop quits.
     dispose: async () => {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       try {
         fs.unlinkSync(HEARTBEAT_FILE);
       } catch {}
       emit("sleeping");
+      // Best-effort instant close: the Electron app owns the pid file.
+      //
+      // Only signal a pid we have confirmed is still alive. A stale pet.pid
+      // (pet crashed, pid recycled by the OS) would otherwise make us
+      // terminate an unrelated process. The liveness probe is inherently
+      // racy, but it narrows the window to effectively nothing and removes
+      // the common stale-file case.
+      const pid = readPetPid();
+      if (pid && isProcessAlive(pid)) {
+        try {
+          process.kill(pid);
+        } catch {
+          /* already exited between the probe and the signal */
+        }
+        // The pet normally removes its own pid file on exit; clean up here
+        // too so a failed shutdown cannot strand a stale pid.
+        try {
+          fs.unlinkSync(PID_FILE);
+        } catch {}
+      }
     },
   };
 };
