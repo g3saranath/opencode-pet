@@ -27,6 +27,14 @@ const TOOL_LOOK = {
   task:      ["\uD83E\uDD16", "delegating", "\uD83E\uDE84"], // 🤖 🪄
   todowrite: ["\uD83D\uDCDD", "planning", "\uD83D\uDCDC"],   // 📝 📜
   question:  ["\u2753", "asking", "\u2753"],
+  delete:    ["\uD83D\uDDD1\uFE0F", "removing", "\uD83D\uDDD1\uFE0F"], // 🗑️
+  move:      ["\uD83D\uDCE6", "moving", "\uD83D\uDCE6"],     // 📦
+  mkdir:     ["\uD83D\uDCC1", "creating", "\uD83D\uDCC1"],   // 📁
+  notebook:  ["\uD83D\uDCD3", "editing", "\uD83D\uDCD3"],    // 📓
+  fetch:     ["\uD83C\uDF10", "fetching", "\uD83E\uDD89"],
+  search:    ["\uD83D\uDD0D", "searching", "\uD83D\uDD0D"],
+  agent:     ["\uD83E\uDD16", "delegating", "\uD83E\uDE84"],
+  computer:  ["\uD83D\uDDA5\uFE0F", "using", "\uD83D\uDDA5\uFE0F"], // 🖥️
 };
 const ALL_TOOL_CLASSES = Object.keys(TOOL_LOOK).map((t) => "tool-" + t);
 
@@ -40,9 +48,34 @@ const STATE_LOOK = {
   idle:     [null, ""],
 };
 
+// Wizard-flavoured verbs shown while the pet works with no specific tool to
+// name. Cycles so it does not sit on one word, Claude-Code-spinner style.
+const WORKING_VERBS = [
+  "casting", "conjuring", "scrying", "brewing", "weaving",
+  "channeling", "summoning", "divining", "enchanting", "scribing",
+];
+
 let relaxTimer = null;
 let prevState = "idle";
 let muted = false;
+let verbTimer = null;
+let verbIdx = 0;
+
+function stopVerbs() {
+  if (verbTimer) { clearInterval(verbTimer); verbTimer = null; }
+}
+
+function startVerbs(pool) {
+  stopVerbs();
+  if (!pool || !pool.length) return;
+  verbIdx = Math.floor(Math.random() * pool.length);
+  const tick = () => {
+    bubbleText.textContent = " " + pool[verbIdx % pool.length];
+    verbIdx++;
+  };
+  tick();
+  verbTimer = setInterval(tick, 2000);
+}
 
 // ---------------------------------------------------------------------------
 // Activity feed
@@ -95,19 +128,30 @@ function setState(payload) {
   for (const c of ALL_TOOL_CLASSES) stage.classList.remove(c);
   const tool = payload && payload.tool;
 
+  const detail = payload && payload.detail ? String(payload.detail) : "";
+
   let emoji = null, text = "", prop = "";
   if (tool && TOOL_LOOK[tool]) {
     stage.classList.add("tool-" + tool);
     [emoji, text, prop] = TOOL_LOOK[tool];
+    if (detail) text = detail;
+  } else if (tool && tool !== "tool") {
+    // Unknown tool: name it instead of falling back to a generic verb.
+    emoji = "\uD83E\uDE84";
+    text = detail ? tool + " " + detail : tool;
   } else if (STATE_LOOK[state]) {
     [emoji, text] = STATE_LOOK[state];
+    if (detail) text = detail;
   }
-  if (payload && payload.detail) text = payload.detail;
+
+  stopVerbs();
+  const genericWorking = state === "working" && !tool && !detail;
 
   if (emoji) {
     bubbleEmoji.textContent = emoji;
     bubbleText.textContent = text ? " " + text : "";
     bubble.classList.add("show");
+    if (genericWorking) startVerbs(WORKING_VERBS);
   } else {
     bubble.classList.remove("show");
   }

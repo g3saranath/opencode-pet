@@ -110,6 +110,31 @@ const TOOL_META: Record<string, [string, string]> = {
   question: ["\u2753", "ask"],
 };
 
+// V2 tools arrive with slightly different names depending on the client. Map
+// the known aliases back to the canonical names used above so the pet can label
+// them, and keep anything unknown as-is (lowercased).
+const TOOL_ALIASES: Record<string, string> = {
+  apply_patch: "patch",
+  shell: "bash",
+  terminal: "bash",
+  exec: "bash",
+  read_file: "read",
+  write_file: "write",
+  edit_file: "edit",
+  list_dir: "list",
+  ls: "list",
+  web_search: "websearch",
+  web_fetch: "webfetch",
+  webfetch: "webfetch",
+  todowrite: "todowrite",
+};
+
+function normalizeTool(name: unknown): string {
+  const raw = String(name ?? "").trim().toLowerCase();
+  if (!raw) return "tool";
+  return TOOL_ALIASES[raw] || raw;
+}
+
 function logStep(icon: string, text: string, kind: string, max = 60) {
   feed.push({ seq: ++seq, icon, text: truncate(text, max), kind });
   if (feed.length > FEED_MAX) feed = feed.slice(-FEED_MAX);
@@ -443,12 +468,12 @@ function handleEvent(ev: any) {
 
     // Remember the tool name so the later "called" line can be labelled.
     case "session.tool.input.started":
-      if (d.id) callNames.set(d.id, String(d.name || "tool"));
+      if (d.id) callNames.set(d.id, normalizeTool(d.name));
       break;
 
     case "session.tool.called": {
       activeTools++;
-      const tool = callNames.get(d.id) || "tool";
+      const tool = normalizeTool(d.name || callNames.get(d.id));
       callNames.delete(d.id);
       if (tool === "todowrite") {
         planFromTodos(d.input?.todos);
