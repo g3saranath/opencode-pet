@@ -78,6 +78,9 @@ const RELAY_MAX = 180;
 // A tool call is in flight between "called" and "success"/"failed"; used to
 // keep the pet on "working" while it is busy.
 let activeTools = 0;
+// V2 whole-turn execution in flight; completion is signalled by
+// session.execution.succeeded, which the pet treats as "done".
+let activeExecutions = 0;
 
 // Throttled writes so streaming deltas don't hammer the state file.
 let pendingState: PetState = "idle";
@@ -152,7 +155,7 @@ function relayDelta(id: string, icon: string, kind: string, delta: unknown) {
   streamBuf.set(id, acc);
   if (!acc.trim()) return;
   streamLine(id, icon, kind, tail(acc));
-  emitThrottled(activeTools > 0 ? "working" : "thinking");
+  emitThrottled(activeTools > 0 || activeExecutions > 0 ? "working" : "thinking");
 }
 
 function relayEnd(id: string, icon: string, kind: string, finalText: unknown) {
@@ -437,7 +440,7 @@ function handleEvent(ev: any) {
       const text = String(item.text ?? item.prompt ?? "").replace(/\s+/g, " ").trim();
       if (text) logStep("\uD83E\uDDD1", "you: " + text, "you", 80);
       lastTodoLabel = "";
-      emit(activeTools > 0 ? "working" : "thinking");
+      emit(activeTools > 0 || activeExecutions > 0 ? "working" : "thinking");
       break;
     }
 
@@ -466,7 +469,7 @@ function handleEvent(ev: any) {
       callNames.delete(d.id);
       const line = snippet(extractText(d), 54);
       if (line) logStep("\u21B3", line, "out");
-      emit(activeTools > 0 ? "working" : "thinking");
+      emit(activeTools > 0 || activeExecutions > 0 ? "working" : "thinking");
       break;
     }
 
@@ -511,8 +514,40 @@ function handleEvent(ev: any) {
       break;
     }
 
+    case "session.execution.started": {
+      activeExecutions++;
+      emit("working", { detail: "running" });
+      break;
+    }
+
+    case "session.execution.succeeded": {
+      activeTools = 0;
+      activeExecutions = 0;
+      if (feed[feed.length - 1]?.kind !== "done") logStep("\u2728", "finished", "done");
+      emit("happy");
+      break;
+    }
+
+    case "session.execution.failed": {
+      activeTools = 0;
+      activeExecutions = 0;
+      const msg = d.error?.message || d.error?.name || snippet(extractText(d), 54) || "execution failed";
+      logStep("\uD83D\uDCA5", "error: " + msg, "error");
+      emit("error", { detail: truncate(msg, 22) });
+      break;
+    }
+
+    case "session.execution.interrupted": {
+      activeTools = 0;
+      activeExecutions = 0;
+      logStep("\u23F8", "stopped", "wait");
+      emit("thinking");
+      break;
+    }
+
     case "session.idle":
       activeTools = 0;
+      activeExecutions = 0;
       if (feed[feed.length - 1]?.kind !== "done") logStep("\u2728", "finished", "done");
       emit("happy");
       break;
