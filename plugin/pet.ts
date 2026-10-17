@@ -304,6 +304,83 @@ function truncate(s: unknown, n: number): string {
   const str = String(s ?? "").replace(/\s+/g, " ").trim();
   return str.length > n ? str.slice(0, n - 1) + "\u2026" : str;
 }
+// Turn a shell command into a short, human label so the pet does not paste a
+// wall of `cd ...; && ...` into the bubble. Prefers the segment that names a
+// known tool (npm, git, gh, ...), otherwise the first token.
+function bashLabel(cmd: unknown): string {
+  const full = String(cmd ?? "").trim();
+  if (!full) return "running";
+  const segments = full
+    .split(/;|&&|\|\||\|/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const KNOWN = /^(npm|npx|yarn|pnpm|bun|git|gh|node|deno|python|python3|py|pip|uv|cargo|go|dotnet|docker|kubectl|make|tsc|vitest|jest|pytest)\b/;
+  const seg = segments.find((s) => KNOWN.test(s)) || segments[segments.length - 1] || full;
+  const tokens = seg.split(/\s+/);
+  const head = tokens[0].toLowerCase();
+  const sub = (tokens[1] || "").toLowerCase();
+
+  if (["npm", "npx", "yarn", "pnpm", "bun"].includes(head)) {
+    if (sub === "test" || sub === "t") return "testing";
+    if (sub === "install" || sub === "i" || sub === "add" || sub === "ci") return "installing";
+    if (sub === "build") return "building";
+    if (sub === "start" || sub === "dev" || sub === "serve") return "starting";
+    if (sub === "run") return "running " + (tokens[2] || "script");
+    return "running " + (sub || head);
+  }
+  if (head === "git") {
+    if (sub === "commit") return "committing";
+    if (sub === "push") return "pushing";
+    if (sub === "pull" || sub === "fetch") return "pulling";
+    if (sub === "status") return "checking status";
+    if (sub === "diff") return "diffing";
+    if (sub === "checkout" || sub === "switch") return "switching branch";
+    if (sub === "merge" || sub === "rebase") return "merging";
+    if (sub === "log") return "reading history";
+    if (sub === "clone") return "cloning";
+    return "git " + (sub || "command");
+  }
+  if (head === "gh") {
+    if (sub === "pr") {
+      const action = (tokens[2] || "").toLowerCase();
+      if (action === "create") return "opening PR";
+      if (action === "edit") return "editing PR";
+      if (action === "merge") return "merging PR";
+      if (action === "view") return "viewing PR";
+      if (action === "list") return "listing PRs";
+      return "PR " + (action || "task");
+    }
+    if (sub === "issue") return "managing issue";
+    if (sub === "run") return "checking CI";
+    if (sub === "repo") return "repo task";
+    return "running gh";
+  }
+  if (["node", "deno", "bun"].includes(head)) return "running " + head;
+  if (["python", "python3", "py"].includes(head)) return "running python";
+  if (["pip", "uv"].includes(head)) return "installing packages";
+  if (head === "cargo") return sub === "build" ? "building" : "cargo " + (sub || "task");
+  if (head === "go" && sub === "test") return "testing";
+  if (["docker", "docker-compose"].includes(head)) return "docker " + (sub || "task");
+  if (head === "kubectl") return "kubectl " + (sub || "task");
+  if (head === "make") return "building";
+  if (["cd", "pushd", "popd"].includes(head)) return "navigating";
+  if (["ls", "dir"].includes(head)) return "listing files";
+  if (["rm", "del", "rmdir"].includes(head)) return "removing";
+  if (["cp", "copy"].includes(head)) return "copying";
+  if (["mv", "move"].includes(head)) return "moving";
+  if (head === "mkdir") return "creating folder";
+  if (["curl", "wget", "invoke-webrequest", "iwr"].includes(head)) return "fetching";
+  if (["cat", "type", "less", "more"].includes(head)) return "reading";
+  if (["echo", "write-output"].includes(head)) return "writing";
+  if (/^(tsc|vitest|jest|pytest|eslint|prettier)$/.test(head)) return "running " + head;
+  return "running " + truncate(head, 14);
+}
+
+// Raw command shown in the activity feed (the bubble gets the friendly label).
+function bashSnippet(cmd: unknown): string {
+  return truncate(String(cmd ?? "").replace(/\s+/g, " ").trim(), 54);
+}
+
 function summarize(tool: string, args: any): string {
   args = args || {};
   switch (tool) {
@@ -313,7 +390,7 @@ function summarize(tool: string, args: any): string {
     case "read":
       return basename(args.filePath || args.path || args.file);
     case "bash":
-      return truncate(args.command || args.cmd, 24);
+      return bashLabel(args.command || args.cmd);
     case "grep":
       return truncate(args.pattern, 22);
     case "glob":
@@ -481,7 +558,14 @@ function handleEvent(ev: any) {
       }
       const detail = summarize(tool, d.input);
       const meta = TOOL_META[tool] || ["\uD83E\uDE84", tool];
-      logStep(meta[0], detail ? `${meta[1]} ${detail}` : meta[1], "step");
+      // Feed keeps the real command; the bubble gets the short friendly label.
+      const feedText =
+        tool === "bash"
+          ? bashSnippet(d.input?.command || d.input?.cmd)
+          : detail
+            ? `${meta[1]} ${detail}`
+            : meta[1];
+      logStep(meta[0], feedText, "step");
       emit("working", { tool, detail });
       break;
     }
