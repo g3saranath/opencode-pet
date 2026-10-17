@@ -325,7 +325,22 @@ function bashLabel(cmd: unknown): string {
     if (sub === "install" || sub === "i" || sub === "add" || sub === "ci") return "installing";
     if (sub === "build") return "building";
     if (sub === "start" || sub === "dev" || sub === "serve") return "starting";
-    if (sub === "run") return "running " + (tokens[2] || "script");
+    if (sub === "lint") return "linting";
+    if (head === "npx") {
+      if (sub === "tsc") return "type-checking";
+      if (["vitest", "jest", "pytest"].includes(sub)) return "testing";
+      if (sub === "eslint") return "linting";
+      if (sub === "prettier") return "formatting";
+    }
+    if (sub === "run") {
+      const script = (tokens[2] || "").toLowerCase();
+      if (script === "build" || script === "compile") return "building";
+      if (script === "test") return "testing";
+      if (script === "dev" || script === "start" || script === "serve") return "starting";
+      if (script === "lint") return "linting";
+      if (script === "typecheck" || script === "type-check") return "type-checking";
+      return "running " + (script || "script");
+    }
     return "running " + (sub || head);
   }
   if (head === "git") {
@@ -357,11 +372,48 @@ function bashLabel(cmd: unknown): string {
   }
   if (["node", "deno", "bun"].includes(head)) return "running " + head;
   if (["python", "python3", "py"].includes(head)) return "running python";
-  if (["pip", "uv"].includes(head)) return "installing packages";
-  if (head === "cargo") return sub === "build" ? "building" : "cargo " + (sub || "task");
-  if (head === "go" && sub === "test") return "testing";
-  if (["docker", "docker-compose"].includes(head)) return "docker " + (sub || "task");
-  if (head === "kubectl") return "kubectl " + (sub || "task");
+  if (["pip"].includes(head)) return "installing packages";
+  if (head === "uv") {
+    if (sub === "run") return "running python";
+    if (sub === "sync" || sub === "add" || sub === "pip") return "installing packages";
+    return "running uv";
+  }
+  if (head === "cargo") {
+    if (sub === "test") return "testing";
+    if (sub === "build" || sub === "check") return "building";
+    if (sub === "run") return "running";
+    if (sub === "clippy" || sub === "fmt") return "checking code";
+    return "cargo " + (sub || "task");
+  }
+  if (head === "go") {
+    if (sub === "test") return "testing";
+    if (sub === "build") return "building";
+    if (sub === "run") return "running";
+    if (sub === "mod") return "managing modules";
+    return "go " + (sub || "task");
+  }
+  if (["docker", "docker-compose"].includes(head)) {
+    if (sub === "build" || tokens[1] === "compose" && tokens[2] === "build") return "building image";
+    if (sub === "compose") {
+      const action = (tokens[2] || "").toLowerCase();
+      if (action === "up") return "starting containers";
+      if (action === "down") return "stopping containers";
+      if (action === "logs") return "reading logs";
+      return "compose " + (action || "task");
+    }
+    if (sub === "ps") return "listing containers";
+    if (sub === "logs") return "reading logs";
+    if (sub === "exec") return "entering container";
+    return "docker " + (sub || "task");
+  }
+  if (head === "kubectl") {
+    if (sub === "get") return "reading cluster";
+    if (sub === "apply") return "applying config";
+    if (sub === "logs") return "reading logs";
+    if (sub === "describe") return "inspecting";
+    if (sub === "delete") return "removing resource";
+    return "kubectl " + (sub || "task");
+  }
   if (head === "make") return "building";
   if (["cd", "pushd", "popd"].includes(head)) return "navigating";
   if (["ls", "dir"].includes(head)) return "listing files";
@@ -372,7 +424,10 @@ function bashLabel(cmd: unknown): string {
   if (["curl", "wget", "invoke-webrequest", "iwr"].includes(head)) return "fetching";
   if (["cat", "type", "less", "more"].includes(head)) return "reading";
   if (["echo", "write-output"].includes(head)) return "writing";
-  if (/^(tsc|vitest|jest|pytest|eslint|prettier)$/.test(head)) return "running " + head;
+  if (head === "tsc") return "type-checking";
+  if (["vitest", "jest", "pytest"].includes(head)) return "testing";
+  if (head === "eslint") return "linting";
+  if (head === "prettier") return "formatting";
   return "running " + truncate(head, 14);
 }
 
@@ -678,6 +733,8 @@ function handleEvent(ev: any) {
 // ---------------------------------------------------------------------------
 // Plugin (V2 default definition: an id plus a setup function)
 // ---------------------------------------------------------------------------
+export { bashLabel };
+
 export default {
   id: "opencode-pet",
 
