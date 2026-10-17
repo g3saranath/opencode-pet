@@ -314,9 +314,12 @@ function bashLabel(cmd: unknown): string {
     .split(/;|&&|\|\||\|/)
     .map((s) => s.trim())
     .filter(Boolean);
-  const KNOWN = /^(npm|npx|yarn|pnpm|bun|git|gh|node|deno|python|python3|py|pip|uv|cargo|go|dotnet|docker|kubectl|make|tsc|vitest|jest|pytest)\b/;
-  const seg = segments.find((s) => KNOWN.test(s)) || segments[segments.length - 1] || full;
-  const tokens = seg.split(/\s+/);
+  // Skip variable assignments and navigation so `cd X; npm test` and
+  // `$p = ...; Get-Content $p` label the real work, not the setup step.
+  const SKIP = /^(\$?[\w:\\.-]+\s*=|cd\b|pushd\b|popd\b|set-location\b)/i;
+  const pool = segments.filter((s) => !SKIP.test(s));
+  const seg = pool[0] || segments[0] || full;
+  const tokens = seg.replace(/^&\s*/, "").split(/\s+/);
   const head = tokens[0].toLowerCase();
   const sub = (tokens[1] || "").toLowerCase();
 
@@ -428,6 +431,30 @@ function bashLabel(cmd: unknown): string {
   if (["vitest", "jest", "pytest"].includes(head)) return "testing";
   if (head === "eslint") return "linting";
   if (head === "prettier") return "formatting";
+  // PowerShell cmdlets (Windows default shell). Matched case-insensitively
+  // because the head is lowercased above.
+  const PS: Record<string, string> = {
+    "get-childitem": "listing files", gci: "listing files",
+    "get-content": "reading", gc: "reading",
+    "set-content": "writing", "out-file": "writing", "add-content": "writing",
+    "select-string": "searching", sls: "searching",
+    "foreach-object": "processing", "where-object": "filtering",
+    "select-object": "selecting", "sort-object": "sorting",
+    "group-object": "grouping", "measure-object": "measuring",
+    "compare-object": "comparing",
+    "join-path": "resolving path", "resolve-path": "resolving path",
+    "test-path": "checking path",
+    "new-item": "creating", "remove-item": "removing",
+    "copy-item": "copying", "move-item": "moving",
+    "get-item": "reading", "get-itemproperty": "reading",
+    "write-host": "writing", "write-output": "writing", "write-error": "writing",
+    "invoke-webrequest": "fetching", "invoke-restmethod": "fetching",
+    "start-process": "starting", "stop-process": "stopping", kill: "stopping",
+    "get-process": "checking processes", "get-service": "checking services",
+    "get-command": "looking up command", "get-help": "reading help",
+    "convertfrom-json": "parsing json", "convertto-json": "writing json",
+  };
+  if (PS[head]) return PS[head];
   return "running " + truncate(head, 14);
 }
 

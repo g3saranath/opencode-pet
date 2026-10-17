@@ -73,6 +73,24 @@ const CASES = [
     "editing PR",
   ],
   ["cd D:/foo && npm test && npm run build", "testing"],
+  // PowerShell cmdlets (Windows default shell)
+  ["Get-Content state.json -Raw", "reading"],
+  ["$s = Get-Content state.json -Raw; ConvertFrom-Json", "parsing json"],
+  ["Get-Process electron | Select-Object Id,ProcessName", "checking processes"],
+  ["Get-ChildItem -Force", "listing files"],
+  ["Set-Content out.txt hello", "writing"],
+  ["Invoke-WebRequest https://example.com", "fetching"],
+  ["Select-String -Pattern TODO -Path .\\*.ts", "searching"],
+  ["Remove-Item -Recurse dist", "removing"],
+  // variable assignments are skipped so the real cmdlet wins
+  [
+    '$dir = Join-Path $env:USERPROFILE ".cache\\opencode-pet"; Get-ChildItem $dir',
+    "listing files",
+  ],
+  [
+    '$p = Join-Path $env:USERPROFILE ".cache\\opencode-pet\\state.json"; $s = Get-Content $p -Raw | ConvertFrom-Json; $s.feed | ForEach-Object { $_.text }',
+    "parsing json",
+  ],
   // unknown falls back to the command name
   ["somecustomtool --flag value", "running somecustomtool"],
 ];
