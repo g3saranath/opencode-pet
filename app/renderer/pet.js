@@ -12,48 +12,10 @@ const ALL_STATES = [
   "idle", "thinking", "working", "waiting", "happy", "error", "sleeping",
 ];
 
-// tool -> [bubbleEmoji, label, floatingProp]
-const TOOL_LOOK = {
-  edit:      ["\u270F\uFE0F", "editing", "\u270D\uFE0F"],   // ✏️ ✍️
-  write:     ["\u270F\uFE0F", "writing", "\u270D\uFE0F"],
-  patch:     ["\u270F\uFE0F", "editing", "\u270D\uFE0F"],
-  read:      ["\uD83D\uDCD6", "reading", "\uD83D\uDCD6"],   // 📖
-  bash:      ["\u2699\uFE0F", "running", "\uD83E\uDDEA"],    // ⚙️ 🧪
-  grep:      ["\uD83D\uDD0D", "searching", "\uD83D\uDD0D"],  // 🔍
-  glob:      ["\uD83D\uDCC2", "looking", "\uD83D\uDD2E"],    // 📂 🔮
-  list:      ["\uD83D\uDCC2", "looking", "\uD83D\uDD2E"],
-  webfetch:  ["\uD83C\uDF10", "browsing", "\uD83E\uDD89"],   // 🌐 🦉
-  websearch: ["\uD83C\uDF10", "searching", "\uD83E\uDD89"],
-  task:      ["\uD83E\uDD16", "delegating", "\uD83E\uDE84"], // 🤖 🪄
-  todowrite: ["\uD83D\uDCDD", "planning", "\uD83D\uDCDC"],   // 📝 📜
-  question:  ["\u2753", "asking", "\u2753"],
-  delete:    ["\uD83D\uDDD1\uFE0F", "removing", "\uD83D\uDDD1\uFE0F"], // 🗑️
-  move:      ["\uD83D\uDCE6", "moving", "\uD83D\uDCE6"],     // 📦
-  mkdir:     ["\uD83D\uDCC1", "creating", "\uD83D\uDCC1"],   // 📁
-  notebook:  ["\uD83D\uDCD3", "editing", "\uD83D\uDCD3"],    // 📓
-  fetch:     ["\uD83C\uDF10", "fetching", "\uD83E\uDD89"],
-  search:    ["\uD83D\uDD0D", "searching", "\uD83D\uDD0D"],
-  agent:     ["\uD83E\uDD16", "delegating", "\uD83E\uDE84"],
-  computer:  ["\uD83D\uDDA5\uFE0F", "using", "\uD83D\uDDA5\uFE0F"], // 🖥️
-};
+// Shared label tables and the "what to show" decision live in labels.js so the
+// tests can exercise them without a DOM.
+const { TOOL_LOOK, WORKING_VERBS, resolveBubble } = window.PetLabels;
 const ALL_TOOL_CLASSES = Object.keys(TOOL_LOOK).map((t) => "tool-" + t);
-
-const STATE_LOOK = {
-  thinking: [null, ""],
-  working:  ["\uD83E\uDE84", "casting"],
-  waiting:  ["\u2753", "your call?"],
-  happy:    ["\u2728", "done!"],
-  error:    ["\uD83D\uDCA5", "uh oh"],
-  sleeping: [null, ""],
-  idle:     [null, ""],
-};
-
-// Wizard-flavoured verbs shown while the pet works with no specific tool to
-// name. Cycles so it does not sit on one word, Claude-Code-spinner style.
-const WORKING_VERBS = [
-  "casting", "conjuring", "scrying", "brewing", "weaving",
-  "channeling", "summoning", "divining", "enchanting", "scribing",
-];
 
 let relaxTimer = null;
 let prevState = "idle";
@@ -130,28 +92,16 @@ function setState(payload) {
 
   const detail = payload && payload.detail ? String(payload.detail) : "";
 
-  let emoji = null, text = "", prop = "";
-  if (tool && TOOL_LOOK[tool]) {
-    stage.classList.add("tool-" + tool);
-    [emoji, text, prop] = TOOL_LOOK[tool];
-    if (detail) text = detail;
-  } else if (tool && tool !== "tool") {
-    // Unknown tool: name it instead of falling back to a generic verb.
-    emoji = "\uD83E\uDE84";
-    text = detail ? tool + " " + detail : tool;
-  } else if (STATE_LOOK[state]) {
-    [emoji, text] = STATE_LOOK[state];
-    if (detail) text = detail;
-  }
+  const { emoji, text, prop, toolClass, generic } = resolveBubble(state, tool, detail);
+  if (toolClass) stage.classList.add(toolClass);
 
   stopVerbs();
-  const genericWorking = state === "working" && !tool && !detail;
 
   if (emoji) {
     bubbleEmoji.textContent = emoji;
     bubbleText.textContent = text ? " " + text : "";
     bubble.classList.add("show");
-    if (genericWorking) startVerbs(WORKING_VERBS);
+    if (generic) startVerbs(WORKING_VERBS);
   } else {
     bubble.classList.remove("show");
   }
