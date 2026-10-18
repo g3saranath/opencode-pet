@@ -18,10 +18,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DIR, PID_FILE, HEARTBEAT_FILE } from "../shared/paths.js";
+import { DIR, HEARTBEAT_FILE } from "../shared/paths.js";
 import { createStateWriter, type PetState } from "../shared/state-protocol.js";
 import { resolveElectronBin, hasElectron } from "../shared/electron-bin.js";
 import { isProcessAlive } from "../shared/process-alive.js";
+import { readPetPid, closePetProcess } from "../shared/pet-process.js";
 
 // V2 loads this plugin into opencode's long-lived background service, which
 // outlives the desktop app: the service keeps running after you close the
@@ -635,15 +636,6 @@ function emitThrottled(state: PetState, extra: Record<string, unknown> = {}) {
 // ---------------------------------------------------------------------------
 // Launch the Electron overlay (once)
 // ---------------------------------------------------------------------------
-function readPetPid(): number {
-  try {
-    const pid = parseInt(fs.readFileSync(PID_FILE, "utf8").trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : 0;
-  } catch {
-    return 0;
-  }
-}
-
 function petAlreadyRunning(): boolean {
   return isProcessAlive(readPetPid());
 }
@@ -870,11 +862,82 @@ function handleEvent(ev: any) {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin (V2 default definition: an id plus a setup function)
+// OpenCode V1 state.
+//
+// V1 (opencode 1.x >= 1.18.29) has no ctx and no event subscription: it loads
+// one object of string-keyed hooks. Only one entry point runs for a given
+// opencode version, and the two share the helper layer above but keep their own
+// live state so they can never interfere even if that ever changes.
+// ---------------------------------------------------------------------------
+const V1_HEARTBEAT_MS = 15 * 1000;
+let v1HeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+let v1UserMsgId: string | null = null;
+
+// Streamed text. V1 sends the full part on message.part.updated (the part
+// boundary) and the next chunk on message.part.delta for the same part id. We
+// remember each part's kind from its boundary, append deltas, and render the
+// line in place. Boundary updates replace the buffered text instead of
+// appending, so a late full snapshot cannot double the text.
+const v1Parts = new Map<string, { kind: "say" | "reason"; text: string }>();
+
+function v1PartKind(type: unknown): "say" | "reason" | null {
+  if (type === "reasoning") return "reason";
+  if (type === "text") return "say";
+  return null;
+}
+
+function v1RenderPart(partID: string) {
+  const part = v1Parts.get(partID);
+  if (!part) return;
+  const raw = part.text.replace(/\s+/g, " ").trim();
+  if (!raw) return;
+  const icon = part.kind === "reason" ? "\uD83D\uDCAD" : "\uD83D\uDDE8\uFE0F";
+  streamLine(partID, icon, part.kind, tail(raw));
+  emitThrottled(busyState(), busyExtra());
+}
+
+// Part boundary: the whole part arrives, so replace any text we had buffered.
+function v1PartUpdated(part: any) {
+  if (!part || !part.id) return;
+  const kind = v1PartKind(part.type);
+  if (!kind) return; // tool / step / file parts are relayed elsewhere
+  if (part.synthetic || part.ignored) return;
+  if (v1UserMsgId && part.messageID === v1UserMsgId) return; // don't echo the prompt
+  v1Parts.set(part.id, { kind, text: String(part.text ?? "") });
+  v1RenderPart(part.id);
+}
+
+// Streamed chunk: append to the part we already know. Only the text field is
+// relayed, and deltas for an unknown part are ignored rather than guessed.
+function v1PartDelta(props: any) {
+  if (props?.field !== "text") return;
+  const partID = props?.partID;
+  const part = partID ? v1Parts.get(partID) : undefined;
+  if (!part) return;
+  if (v1UserMsgId && props.messageID === v1UserMsgId) return;
+  part.text += String(props.delta ?? "");
+  v1RenderPart(partID);
+}
+
+// V1 asks for approval with a `permission` name plus `patterns` (see OpenCode
+// 1.x PermissionV1.Request). Older builds used a `title` on permission.updated,
+// kept here as a fallback so either event labels the bubble. The label mirrors
+// the V2 style ("allow shell npm test?").
+function permissionLabel(props: any): string {
+  const permission = String(props?.permission ?? "").trim();
+  const pattern = Array.isArray(props?.patterns) ? String(props.patterns[0] ?? "").trim() : "";
+  const asked = permission ? `allow ${permission}${pattern ? " " + pattern : ""}?` : "";
+  const title = String(props?.title ?? "").trim();
+  return asked || title || "needs approval";
+}
+
+// ---------------------------------------------------------------------------
+// Plugin: an id, the V2 setup(), and the V1 server(). opencode 2.x calls
+// setup(); opencode 1.x (>= 1.18.29) calls server(). Only one runs.
 // ---------------------------------------------------------------------------
 export { bashLabel };
 
-export default {
+const petPlugin = {
   id: "opencode-pet",
 
   async setup(ctx: Plugin.Context) {
@@ -904,23 +967,12 @@ export default {
     // Close the pet now that the app is gone. Deleting the heartbeat and
     // signalling the overlay makes it vanish immediately; the overlay's own
     // stale-heartbeat check (45s to nap, then 15s to quit) is only the fallback
-    // for when this never runs.
-    // Only signal a pid we have confirmed is still alive, so a stale pet.pid
-    // (pet crashed, pid recycled by the OS) cannot make us kill an unrelated
+    // for when this never runs. The shared helper only signals a pid it has
+    // confirmed is still alive, so a stale pet.pid cannot kill an unrelated
     // process.
     const closePet = () => {
       releasePet();
-      const pid = readPetPid();
-      if (pid && isProcessAlive(pid)) {
-        try {
-          process.kill(pid);
-        } catch {
-          /* already exited between the probe and the signal */
-        }
-        try {
-          fs.unlinkSync(PID_FILE);
-        } catch {}
-      }
+      closePetProcess();
     };
 
     // Ask the OS whether the app is open, and keep the pet in step. Runs on a
@@ -1012,4 +1064,129 @@ export default {
       else ownership.release();
     };
   },
-} satisfies Plugin.Plugin;
+
+  // -------------------------------------------------------------------------
+  // OpenCode V1 entry point.
+  //
+  // opencode 1.x loads the default export's server() and uses the string-keyed
+  // hooks it returns. There is no ctx, no event subscription, and no desktop-app
+  // follow: the plugin lives and dies with the session, so it just pulses a
+  // heartbeat and relays the events it is handed. The state and helpers above
+  // (logStep, emit, launchPet, summarize, streamLine, ...) are reused as-is;
+  // only the event wiring and lifecycle differ from setup().
+  // -------------------------------------------------------------------------
+  async server() {
+    // Wake the pet the moment opencode connects.
+    beat();
+    logStep("\u2728", "connected", "meta");
+    emit("idle");
+    launchPet();
+    if (v1HeartbeatTimer) clearInterval(v1HeartbeatTimer);
+    v1HeartbeatTimer = setInterval(beat, V1_HEARTBEAT_MS);
+
+    return {
+      // A user prompt / model turn kicked off.
+      "chat.message": async (input: any, output: any) => {
+        v1UserMsgId = input?.messageID || output?.message?.id || null;
+        const parts: any[] = output?.parts || [];
+        const text = parts
+          .filter((p) => p && p.type === "text" && p.text)
+          .map((p) => p.text)
+          .join(" ")
+          .trim();
+        if (text) logStep("\uD83E\uDDD1", "you: " + text, "you", 80);
+        lastTodoLabel = "";
+        emit(busyState(), busyExtra());
+      },
+
+      "tool.execute.before": async (input: any, output: any) => {
+        activeTools++;
+        const tool = normalizeTool(input?.tool);
+        const args = output?.args;
+        if (tool === "todowrite") {
+          planFromTodos(args?.todos);
+          return;
+        }
+        const detail = summarize(tool, args);
+        const meta = TOOL_META[tool] || ["\uD83E\uDE84", tool];
+        // Feed keeps the real command; the bubble gets the short friendly label.
+        const feedText =
+          tool === "bash"
+            ? bashSnippet(args?.command || args?.cmd)
+            : detail
+              ? `${meta[1]} ${detail}`
+              : meta[1];
+        logStep(meta[0], feedText, "step");
+        currentTool = { tool, detail };
+        emit("working", currentTool);
+      },
+
+      "tool.execute.after": async (_input: any, output: any) => {
+        activeTools = Math.max(0, activeTools - 1);
+        if (activeTools === 0) currentTool = {};
+        const line = snippet(extractText(output?.output ?? output), 54);
+        if (line) logStep("\u21B3", line, "out");
+        emit(busyState(), busyExtra());
+      },
+
+      event: async ({ event }: any) => {
+        const props = event?.properties || {};
+        switch (event?.type) {
+          case "message.part.updated":
+            v1PartUpdated(props.part);
+            break;
+          case "message.part.delta":
+            v1PartDelta(props);
+            break;
+          case "session.status": {
+            const status = props.status?.type;
+            if (status === "busy" && activeTools === 0) emit("thinking");
+            else if (status === "retry") {
+              logStep("\uD83D\uDD01", "retrying\u2026", "wait");
+              emit("thinking");
+            }
+            break;
+          }
+          case "todo.updated":
+            planFromTodos(props.todos);
+            break;
+          case "session.idle":
+            resetTools();
+            if (feed[feed.length - 1]?.kind !== "done") logStep("\u2728", "finished", "done");
+            emit("happy");
+            break;
+          case "session.error": {
+            resetTools();
+            const err = props.error;
+            const msg = err?.name || err?.data?.message || "something broke";
+            logStep("\uD83D\uDCA5", "error: " + msg, "error");
+            emit("error", { detail: truncate(msg, 22) });
+            break;
+          }
+          case "permission.asked":
+          case "permission.updated": {
+            const label = permissionLabel(props);
+            logStep("\u2753", label, "wait");
+            emit("waiting", { detail: truncate(label, 24) });
+            break;
+          }
+          case "permission.replied":
+            emit(busyState(), busyExtra());
+            break;
+        }
+      },
+
+      // opencode is shutting down: stop the heartbeat and close the overlay
+      // now, exactly like V2. Without the pid signal the overlay lingers ~15s
+      // after opencode 1 exits.
+      dispose: async () => {
+        if (v1HeartbeatTimer) clearInterval(v1HeartbeatTimer);
+        v1HeartbeatTimer = undefined;
+        closePetProcess();
+        emit("sleeping");
+      },
+    };
+  },
+} satisfies Plugin.Plugin & { server(): Promise<Record<string, unknown>> };
+
+export default petPlugin;
