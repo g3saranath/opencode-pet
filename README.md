@@ -89,6 +89,10 @@ cd ~/opencode-pet
 npm install                                     # downloads Electron
 ```
 
+> `npm install` fetches the Electron app through this project's `postinstall`
+> script. If you install with `--ignore-scripts`, Electron downloads itself the
+> first time the overlay starts instead.
+
 Then register the plugin with opencode by adding its absolute path to `plugins`
 in your global config, `~/.config/opencode/opencode.jsonc` (create the file if
 it doesn't exist):
@@ -180,6 +184,8 @@ square, transparent-background PNGs with the same names and restart the overlay.
 
 Built on macOS (Apple Silicon) and also tested on Windows. It uses standard
 Electron overlay APIs, so Linux should work with minor tweaks - PRs welcome.
+The overlay runs on Electron 44, which needs macOS 13 or newer, or 64-bit
+Windows or Linux.
 
 Auto wake / sleep checks whether the desktop app's process is running. On
 Windows it looks for `OpenCode.exe` out of the box. On macOS and Linux, set
