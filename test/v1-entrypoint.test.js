@@ -10,10 +10,12 @@
 
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { isProcessAlive } = require("../shared/process-alive.js");
 
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-pet-v1-"));
 process.env.USERPROFILE = TMP_HOME;
@@ -105,6 +107,97 @@ test("event: message.part.updated relays streamed text in place", async () => {
   const line = state.feed.find((e) => e.id === "p1");
   assert.ok(line, "streamed line present");
   assert.ok(line.text.includes("thinking hard"));
+});
+
+// ---------------------------------------------------------------------------
+// event: message.part.delta (streamed text, OpenCode 1.18.29+)
+//
+// The server sends the whole part on message.part.updated (the part boundary)
+// and each next chunk on message.part.delta with the same partID, field "text".
+// The plugin must remember the part's type from its boundary, append deltas to
+// one line, and never double the text when a late full snapshot arrives.
+// ---------------------------------------------------------------------------
+
+test("event: message.part.delta appends to the part's single line", async () => {
+  await hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: { part: { id: "pdelta", type: "text", messageID: "md1", text: "" } },
+    },
+  });
+  await hooks.event({
+    event: {
+      type: "message.part.delta",
+      properties: { messageID: "md1", partID: "pdelta", field: "text", delta: "Hello " },
+    },
+  });
+  await hooks.event({
+    event: {
+      type: "message.part.delta",
+      properties: { messageID: "md1", partID: "pdelta", field: "text", delta: "world" },
+    },
+  });
+  await sleep(220);
+  const lines = readState().feed.filter((e) => e.id === "pdelta");
+  assert.equal(lines.length, 1, "one streamed line, not one per delta");
+  assert.equal(lines[0].text, "Hello world");
+});
+
+test("event: message.part.delta ignores a part with no boundary", async () => {
+  await hooks.event({
+    event: {
+      type: "message.part.delta",
+      properties: { messageID: "md2", partID: "punknown", field: "text", delta: "ghost" },
+    },
+  });
+  await sleep(220);
+  assert.equal(
+    readState().feed.some((e) => e.id === "punknown"),
+    false,
+    "a delta with no known part type cannot render",
+  );
+});
+
+test("event: message.part.delta ignores a non-text field", async () => {
+  await hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: { part: { id: "pfield", type: "text", messageID: "md3", text: "keep" } },
+    },
+  });
+  await hooks.event({
+    event: {
+      type: "message.part.delta",
+      properties: { messageID: "md3", partID: "pfield", field: "metadata", delta: "nope" },
+    },
+  });
+  await sleep(220);
+  const line = readState().feed.find((e) => e.id === "pfield");
+  assert.equal(line.text, "keep");
+});
+
+test("event: a late part boundary replaces the buffered text", async () => {
+  await hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: { part: { id: "prepl", type: "reasoning", messageID: "md4", text: "" } },
+    },
+  });
+  await hooks.event({
+    event: {
+      type: "message.part.delta",
+      properties: { messageID: "md4", partID: "prepl", field: "text", delta: "abc" },
+    },
+  });
+  await hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: { part: { id: "prepl", type: "reasoning", messageID: "md4", text: "abcdef" } },
+    },
+  });
+  await sleep(220);
+  const line = readState().feed.find((e) => e.id === "prepl");
+  assert.equal(line.text, "abcdef", "full snapshot replaces, does not append");
 });
 
 test("event: session.idle finishes happily", async () => {
@@ -230,14 +323,40 @@ test("event: todo.updated falls back to a done/total count", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// event: permission.updated
+// event: permission.asked / permission.updated
 //
-// Historical V1 behavior (commit fdccab4), unchanged by the port: log the
-// approval title (falling back to "needs approval") and emit waiting with the
-// title truncated to 24 characters for the bubble.
+// On supported V1 versions approval arrives as permission.asked, carrying
+// `permission` (e.g. "bash") and `patterns` (string[]). The label mirrors the
+// V2 bubble ("allow shell npm test?"). The old permission.updated event is kept
+// as a harmless fallback and still reads its `title`.
 // ---------------------------------------------------------------------------
 
-test("event: permission.updated asks for approval", async () => {
+test("event: permission.asked labels the bubble from permission + pattern", async () => {
+  await hooks.event({
+    event: {
+      type: "permission.asked",
+      properties: { sessionID: "s1", permission: "bash", patterns: ["npm test"] },
+    },
+  });
+  const state = readState();
+  assert.equal(state.state, "waiting");
+  assert.equal(state.detail, "allow bash npm test?");
+  assert.ok(
+    state.feed.some((e) => e.text === "allow bash npm test?" && e.kind === "wait"),
+    "approval line present",
+  );
+});
+
+test("event: permission.asked without a pattern still labels the bubble", async () => {
+  await hooks.event({
+    event: { type: "permission.asked", properties: { sessionID: "s1", permission: "edit", patterns: [] } },
+  });
+  const state = readState();
+  assert.equal(state.state, "waiting");
+  assert.equal(state.detail, "allow edit?");
+});
+
+test("event: permission.updated still reads the legacy title", async () => {
   await hooks.event({
     event: { type: "permission.updated", properties: { title: "Allow running npm test" } },
   });
@@ -250,11 +369,11 @@ test("event: permission.updated asks for approval", async () => {
   );
 });
 
-test("event: permission.updated falls back to a generic prompt", async () => {
+test("event: an unlabelled approval falls back to a generic prompt", async () => {
   await hooks.event({ event: { type: "permission.updated", properties: {} } });
   const state = readState();
   assert.equal(state.state, "waiting");
-  assert.equal(state.detail, "");
+  assert.equal(state.detail, "needs approval");
   assert.ok(
     state.feed.some((e) => e.text === "needs approval" && e.kind === "wait"),
     "fallback line present",
@@ -265,4 +384,32 @@ test("dispose stops the heartbeat and reports sleeping", async () => {
   await hooks.dispose();
   assert.equal(fs.existsSync(HEARTBEAT_FILE), false);
   assert.equal(readState().state, "sleeping");
+});
+
+test("dispose signals a live overlay pid and clears the pid file", async () => {
+  // A stand-in overlay: a real, live process whose pid we own, so dispose takes
+  // the same path it would with the Electron app (no Electron needed).
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  try {
+    for (let i = 0; i < 40 && !isProcessAlive(child.pid); i++) await sleep(25);
+    assert.ok(isProcessAlive(child.pid), "stand-in overlay is running");
+
+    const pidFile = path.join(DIR, "pet.pid");
+    fs.mkdirSync(DIR, { recursive: true });
+    fs.writeFileSync(pidFile, String(child.pid));
+
+    await hooks.dispose();
+
+    for (let i = 0; i < 60 && isProcessAlive(child.pid); i++) await sleep(50);
+    assert.equal(isProcessAlive(child.pid), false, "overlay was signalled to exit");
+    assert.equal(fs.existsSync(pidFile), false, "stale pid file removed");
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
 });

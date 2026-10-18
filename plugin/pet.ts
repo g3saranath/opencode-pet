@@ -18,10 +18,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DIR, PID_FILE, HEARTBEAT_FILE } from "../shared/paths.js";
+import { DIR, HEARTBEAT_FILE } from "../shared/paths.js";
 import { createStateWriter, type PetState } from "../shared/state-protocol.js";
 import { resolveElectronBin, hasElectron } from "../shared/electron-bin.js";
 import { isProcessAlive } from "../shared/process-alive.js";
+import { readPetPid, closePetProcess } from "../shared/pet-process.js";
 
 // V2 loads this plugin into opencode's long-lived background service, which
 // outlives the desktop app: the service keeps running after you close the
@@ -635,15 +636,6 @@ function emitThrottled(state: PetState, extra: Record<string, unknown> = {}) {
 // ---------------------------------------------------------------------------
 // Launch the Electron overlay (once)
 // ---------------------------------------------------------------------------
-function readPetPid(): number {
-  try {
-    const pid = parseInt(fs.readFileSync(PID_FILE, "utf8").trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : 0;
-  } catch {
-    return 0;
-  }
-}
-
 function petAlreadyRunning(): boolean {
   return isProcessAlive(readPetPid());
 }
@@ -881,18 +873,62 @@ const V1_HEARTBEAT_MS = 15 * 1000;
 let v1HeartbeatTimer: ReturnType<typeof setInterval> | undefined;
 let v1UserMsgId: string | null = null;
 
-// V1 delivers whole parts (not deltas), so replace the line for the same part
-// id in place instead of accumulating.
-function v1Relay(part: any) {
-  if (!part || (part.type !== "text" && part.type !== "reasoning")) return;
+// Streamed text. V1 sends the full part on message.part.updated (the part
+// boundary) and the next chunk on message.part.delta for the same part id. We
+// remember each part's kind from its boundary, append deltas, and render the
+// line in place. Boundary updates replace the buffered text instead of
+// appending, so a late full snapshot cannot double the text.
+const v1Parts = new Map<string, { kind: "say" | "reason"; text: string }>();
+
+function v1PartKind(type: unknown): "say" | "reason" | null {
+  if (type === "reasoning") return "reason";
+  if (type === "text") return "say";
+  return null;
+}
+
+function v1RenderPart(partID: string) {
+  const part = v1Parts.get(partID);
+  if (!part) return;
+  const raw = part.text.replace(/\s+/g, " ").trim();
+  if (!raw) return;
+  const icon = part.kind === "reason" ? "\uD83D\uDCAD" : "\uD83D\uDDE8\uFE0F";
+  streamLine(partID, icon, part.kind, tail(raw));
+  emitThrottled(busyState(), busyExtra());
+}
+
+// Part boundary: the whole part arrives, so replace any text we had buffered.
+function v1PartUpdated(part: any) {
+  if (!part || !part.id) return;
+  const kind = v1PartKind(part.type);
+  if (!kind) return; // tool / step / file parts are relayed elsewhere
   if (part.synthetic || part.ignored) return;
   if (v1UserMsgId && part.messageID === v1UserMsgId) return; // don't echo the prompt
-  const raw = String(part.text ?? "").replace(/\s+/g, " ").trim();
-  if (!raw) return;
-  const kind = part.type === "reasoning" ? "reason" : "say";
-  const icon = part.type === "reasoning" ? "\uD83D\uDCAD" : "\uD83D\uDDE8\uFE0F";
-  streamLine(part.id, icon, kind, tail(raw));
-  emitThrottled(busyState(), busyExtra());
+  v1Parts.set(part.id, { kind, text: String(part.text ?? "") });
+  v1RenderPart(part.id);
+}
+
+// Streamed chunk: append to the part we already know. Only the text field is
+// relayed, and deltas for an unknown part are ignored rather than guessed.
+function v1PartDelta(props: any) {
+  if (props?.field !== "text") return;
+  const partID = props?.partID;
+  const part = partID ? v1Parts.get(partID) : undefined;
+  if (!part) return;
+  if (v1UserMsgId && props.messageID === v1UserMsgId) return;
+  part.text += String(props.delta ?? "");
+  v1RenderPart(partID);
+}
+
+// V1 asks for approval with a `permission` name plus `patterns` (see OpenCode
+// 1.x PermissionV1.Request). Older builds used a `title` on permission.updated,
+// kept here as a fallback so either event labels the bubble. The label mirrors
+// the V2 style ("allow shell npm test?").
+function permissionLabel(props: any): string {
+  const permission = String(props?.permission ?? "").trim();
+  const pattern = Array.isArray(props?.patterns) ? String(props.patterns[0] ?? "").trim() : "";
+  const asked = permission ? `allow ${permission}${pattern ? " " + pattern : ""}?` : "";
+  const title = String(props?.title ?? "").trim();
+  return asked || title || "needs approval";
 }
 
 // ---------------------------------------------------------------------------
@@ -931,23 +967,12 @@ const petPlugin = {
     // Close the pet now that the app is gone. Deleting the heartbeat and
     // signalling the overlay makes it vanish immediately; the overlay's own
     // stale-heartbeat check (45s to nap, then 15s to quit) is only the fallback
-    // for when this never runs.
-    // Only signal a pid we have confirmed is still alive, so a stale pet.pid
-    // (pet crashed, pid recycled by the OS) cannot make us kill an unrelated
+    // for when this never runs. The shared helper only signals a pid it has
+    // confirmed is still alive, so a stale pet.pid cannot kill an unrelated
     // process.
     const closePet = () => {
       releasePet();
-      const pid = readPetPid();
-      if (pid && isProcessAlive(pid)) {
-        try {
-          process.kill(pid);
-        } catch {
-          /* already exited between the probe and the signal */
-        }
-        try {
-          fs.unlinkSync(PID_FILE);
-        } catch {}
-      }
+      closePetProcess();
     };
 
     // Ask the OS whether the app is open, and keep the pet in step. Runs on a
@@ -1108,7 +1133,10 @@ const petPlugin = {
         const props = event?.properties || {};
         switch (event?.type) {
           case "message.part.updated":
-            v1Relay(props.part);
+            v1PartUpdated(props.part);
+            break;
+          case "message.part.delta":
+            v1PartDelta(props);
             break;
           case "session.status": {
             const status = props.status?.type;
@@ -1135,23 +1163,26 @@ const petPlugin = {
             emit("error", { detail: truncate(msg, 22) });
             break;
           }
-          case "permission.updated":
-            logStep("\u2753", props.title || "needs approval", "wait");
-            emit("waiting", { detail: truncate(props.title, 24) });
+          case "permission.asked":
+          case "permission.updated": {
+            const label = permissionLabel(props);
+            logStep("\u2753", label, "wait");
+            emit("waiting", { detail: truncate(label, 24) });
             break;
+          }
           case "permission.replied":
             emit(busyState(), busyExtra());
             break;
         }
       },
 
-      // opencode is shutting down: stop the heartbeat and let the pet nap.
+      // opencode is shutting down: stop the heartbeat and close the overlay
+      // now, exactly like V2. Without the pid signal the overlay lingers ~15s
+      // after opencode 1 exits.
       dispose: async () => {
         if (v1HeartbeatTimer) clearInterval(v1HeartbeatTimer);
         v1HeartbeatTimer = undefined;
-        try {
-          fs.unlinkSync(HEARTBEAT_FILE);
-        } catch {}
+        closePetProcess();
         emit("sleeping");
       },
     };
