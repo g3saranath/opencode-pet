@@ -79,9 +79,13 @@ there are no ports and nothing to configure.
 
 ## Install
 
-Requires [opencode](https://opencode.ai) **2.x** and
-[Node.js](https://nodejs.org) 22.18 or newer. The plugin uses the V2 plugin
-contract, so OpenCode 1 will not load it.
+Requires [opencode](https://opencode.ai) and
+[Node.js](https://nodejs.org) 22.18 or newer. The plugin ships both plugin
+contracts from one file, and opencode picks the right entry point on its own:
+
+- **opencode 2.x** loads the V2 entry point (`setup(ctx)`).
+- **opencode 1.x (1.18.29 or newer)** loads the V1 entry point (`server()` with
+  string-keyed hooks). Below 1.18.29 the object entrypoint is not supported.
 
 ```sh
 git clone https://github.com/g3saranath/opencode-pet.git ~/opencode-pet
@@ -93,9 +97,9 @@ npm install                                     # downloads Electron
 > script. If you install with `--ignore-scripts`, Electron downloads itself the
 > first time the overlay starts instead.
 
-Then register the plugin with opencode by adding its absolute path to `plugins`
-in your global config, `~/.config/opencode/opencode.jsonc` (create the file if
-it doesn't exist):
+**opencode 2.x** - add the plugin's absolute path to `plugins` in your global
+config, `~/.config/opencode/opencode.jsonc` (create the file if it doesn't
+exist):
 
 ```jsonc
 {
@@ -107,16 +111,39 @@ it doesn't exist):
 On Windows, use a `file://` URL with forward slashes, for example
 `"file:///D:/Projects/opencode-pet/plugin/pet.ts"`.
 
-Then **restart opencode** (or run `opencode service restart`). Scrybe appears
+**opencode 1.x** - add the plugin's absolute path to `plugin` (singular) in the
+V1 global config, `~/.config/opencode/opencode.json` (create the file if it
+doesn't exist):
+
+```jsonc
+{
+  "plugin": ["/Users/you/opencode-pet/plugin/pet.ts"],
+}
+```
+
+On Windows, use the same kind of path with forward slashes, for example
+`"D:/Projects/opencode-pet/plugin/pet.ts"`.
+
+Then **restart opencode** so it loads the plugin. Quit and relaunch it, or run
+`opencode service restart` to restart the background server. Scrybe appears
 automatically and starts relaying the session.
 
 > **Point at the clone, don't copy.** `plugin/pet.ts` imports this repo's
 > `shared/` modules, so the config entry must point at the file inside your
-> clone. Copying `pet.ts` on its own into `~/.config/opencode/plugins/` will
-> fail to load.
+> clone. Copying `pet.ts` on its own into the plugin directory will fail to
+> load.
 
 > Prefer not to auto-launch the overlay? Set `OPENCODE_PET_NO_LAUNCH=1` and
 > run it yourself with `npm start`.
+
+### Version support
+
+Both entry points drive the same overlay and the same state file. The V2 entry
+point adds desktop-app follow (wake when the desktop app opens, close when it
+closes, reopen included). opencode 1.x has no long-lived background service, so
+the V1 entry point keeps the older behaviour: the pet is awake while opencode is
+running and naps when it disconnects. On 1.x the desktop-app follow and the
+multi-window owner election do not apply.
 
 ## Controls
 

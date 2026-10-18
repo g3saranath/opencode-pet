@@ -870,11 +870,38 @@ function handleEvent(ev: any) {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin (V2 default definition: an id plus a setup function)
+// OpenCode V1 state.
+//
+// V1 (opencode 1.x >= 1.18.29) has no ctx and no event subscription: it loads
+// one object of string-keyed hooks. Only one entry point runs for a given
+// opencode version, and the two share the helper layer above but keep their own
+// live state so they can never interfere even if that ever changes.
+// ---------------------------------------------------------------------------
+const V1_HEARTBEAT_MS = 15 * 1000;
+let v1HeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+let v1UserMsgId: string | null = null;
+
+// V1 delivers whole parts (not deltas), so replace the line for the same part
+// id in place instead of accumulating.
+function v1Relay(part: any) {
+  if (!part || (part.type !== "text" && part.type !== "reasoning")) return;
+  if (part.synthetic || part.ignored) return;
+  if (v1UserMsgId && part.messageID === v1UserMsgId) return; // don't echo the prompt
+  const raw = String(part.text ?? "").replace(/\s+/g, " ").trim();
+  if (!raw) return;
+  const kind = part.type === "reasoning" ? "reason" : "say";
+  const icon = part.type === "reasoning" ? "\uD83D\uDCAD" : "\uD83D\uDDE8\uFE0F";
+  streamLine(part.id, icon, kind, tail(raw));
+  emitThrottled(busyState(), busyExtra());
+}
+
+// ---------------------------------------------------------------------------
+// Plugin: an id, the V2 setup(), and the V1 server(). opencode 2.x calls
+// setup(); opencode 1.x (>= 1.18.29) calls server(). Only one runs.
 // ---------------------------------------------------------------------------
 export { bashLabel };
 
-export default {
+const petPlugin = {
   id: "opencode-pet",
 
   async setup(ctx: Plugin.Context) {
@@ -1012,4 +1039,123 @@ export default {
       else ownership.release();
     };
   },
-} satisfies Plugin.Plugin;
+
+  // -------------------------------------------------------------------------
+  // OpenCode V1 entry point.
+  //
+  // opencode 1.x loads the default export's server() and uses the string-keyed
+  // hooks it returns. There is no ctx, no event subscription, and no desktop-app
+  // follow: the plugin lives and dies with the session, so it just pulses a
+  // heartbeat and relays the events it is handed. The state and helpers above
+  // (logStep, emit, launchPet, summarize, streamLine, ...) are reused as-is;
+  // only the event wiring and lifecycle differ from setup().
+  // -------------------------------------------------------------------------
+  async server() {
+    // Wake the pet the moment opencode connects.
+    beat();
+    logStep("\u2728", "connected", "meta");
+    emit("idle");
+    launchPet();
+    if (v1HeartbeatTimer) clearInterval(v1HeartbeatTimer);
+    v1HeartbeatTimer = setInterval(beat, V1_HEARTBEAT_MS);
+
+    return {
+      // A user prompt / model turn kicked off.
+      "chat.message": async (input: any, output: any) => {
+        v1UserMsgId = input?.messageID || output?.message?.id || null;
+        const parts: any[] = output?.parts || [];
+        const text = parts
+          .filter((p) => p && p.type === "text" && p.text)
+          .map((p) => p.text)
+          .join(" ")
+          .trim();
+        if (text) logStep("\uD83E\uDDD1", "you: " + text, "you", 80);
+        lastTodoLabel = "";
+        emit(busyState(), busyExtra());
+      },
+
+      "tool.execute.before": async (input: any, output: any) => {
+        activeTools++;
+        const tool = normalizeTool(input?.tool);
+        const args = output?.args;
+        if (tool === "todowrite") {
+          planFromTodos(args?.todos);
+          return;
+        }
+        const detail = summarize(tool, args);
+        const meta = TOOL_META[tool] || ["\uD83E\uDE84", tool];
+        // Feed keeps the real command; the bubble gets the short friendly label.
+        const feedText =
+          tool === "bash"
+            ? bashSnippet(args?.command || args?.cmd)
+            : detail
+              ? `${meta[1]} ${detail}`
+              : meta[1];
+        logStep(meta[0], feedText, "step");
+        currentTool = { tool, detail };
+        emit("working", currentTool);
+      },
+
+      "tool.execute.after": async (_input: any, output: any) => {
+        activeTools = Math.max(0, activeTools - 1);
+        if (activeTools === 0) currentTool = {};
+        const line = snippet(extractText(output?.output ?? output), 54);
+        if (line) logStep("\u21B3", line, "out");
+        emit(busyState(), busyExtra());
+      },
+
+      event: async ({ event }: any) => {
+        const props = event?.properties || {};
+        switch (event?.type) {
+          case "message.part.updated":
+            v1Relay(props.part);
+            break;
+          case "session.status": {
+            const status = props.status?.type;
+            if (status === "busy" && activeTools === 0) emit("thinking");
+            else if (status === "retry") {
+              logStep("\uD83D\uDD01", "retrying\u2026", "wait");
+              emit("thinking");
+            }
+            break;
+          }
+          case "todo.updated":
+            planFromTodos(props.todos);
+            break;
+          case "session.idle":
+            resetTools();
+            if (feed[feed.length - 1]?.kind !== "done") logStep("\u2728", "finished", "done");
+            emit("happy");
+            break;
+          case "session.error": {
+            resetTools();
+            const err = props.error;
+            const msg = err?.name || err?.data?.message || "something broke";
+            logStep("\uD83D\uDCA5", "error: " + msg, "error");
+            emit("error", { detail: truncate(msg, 22) });
+            break;
+          }
+          case "permission.updated":
+            logStep("\u2753", props.title || "needs approval", "wait");
+            emit("waiting", { detail: truncate(props.title, 24) });
+            break;
+          case "permission.replied":
+            emit(busyState(), busyExtra());
+            break;
+        }
+      },
+
+      // opencode is shutting down: stop the heartbeat and let the pet nap.
+      dispose: async () => {
+        if (v1HeartbeatTimer) clearInterval(v1HeartbeatTimer);
+        v1HeartbeatTimer = undefined;
+        try {
+          fs.unlinkSync(HEARTBEAT_FILE);
+        } catch {}
+        emit("sleeping");
+      },
+    };
+  },
+} satisfies Plugin.Plugin & { server(): Promise<Record<string, unknown>> };
+
+export default petPlugin;
