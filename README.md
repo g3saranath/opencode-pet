@@ -40,7 +40,11 @@ The character itself changes with the work - not just a badge on top.
   prompt, the model's **reasoning** and **response** (streaming, updating in
   place), each tool call with its target, and the tool **output**.
 - **Live status bubble.** The current action + target at a glance:
-  `✏️ token.ts`, `⚙️ npm test`, `🔍 TODO`, `📝 3/5 done`, `❓ allow bash?`.
+  `✏️ token.ts`, `⚙️ testing`, `🔍 TODO`, `📝 3/5 done`, `❓ allow shell npm test?`.
+  Shell commands get short labels (`npm test` → testing, `git commit` →
+  committing, `gh pr edit` → editing PR) while the log keeps the real command,
+  and with nothing specific to show he cycles through wizard verbs (casting,
+  conjuring, scrying, …).
 - **Custom per-mode art.** Distinct artwork for thinking, working, and sleeping,
   with a mood colour-grade and its own flight motion.
 - **Auto wake / sleep.** Follows the desktop app, not the background service.
@@ -107,19 +111,19 @@ automatically and starts relaying the session.
 > clone. Copying `pet.ts` on its own into `~/.config/opencode/plugins/` will
 > fail to load.
 
-> Prefer not to auto-launch on session start? Set `OPENCODE_PET_NO_LAUNCH=1` and
-> run the overlay yourself with `npm start`.
+> Prefer not to auto-launch the overlay? Set `OPENCODE_PET_NO_LAUNCH=1` and
+> run it yourself with `npm start`.
 
 ## Controls
 
 | Action        | How                                                     |
 | ------------- | ------------------------------------------------------- |
 | Move          | Left-click and drag                                     |
-| Menu          | **Right-click** - Size, Mute, Activity log, Reset, Quit |
+| Menu          | **Right-click** - Size, Mute, Activity log, Reset, Quit pet |
 | Resize        | Right-click ▸ Size ▸ Small / Medium / Large / Huge      |
 | Mute sounds   | Right-click ▸ Mute sounds                               |
 | Show/hide log | Right-click ▸ Show activity log                         |
-| Quit          | Right-click ▸ Quit, or `Ctrl`+`Alt`+`Shift`+`P`         |
+| Quit          | Right-click ▸ Quit pet, or `Ctrl`+`Alt`+`Shift`+`P`     |
 | Run manually  | `npm start`                                             |
 
 ## Configuration
@@ -174,8 +178,8 @@ square, transparent-background PNGs with the same names and restart the overlay.
 
 ## Platform
 
-Built and tested on macOS (Apple Silicon). It uses standard Electron overlay
-APIs, so Linux / Windows should work with minor tweaks - PRs welcome.
+Built on macOS (Apple Silicon) and also tested on Windows. It uses standard
+Electron overlay APIs, so Linux should work with minor tweaks - PRs welcome.
 
 Auto wake / sleep checks whether the desktop app's process is running. On
 Windows it looks for `OpenCode.exe` out of the box. On macOS and Linux, set
@@ -191,7 +195,8 @@ after the last heartbeat and quits 15 seconds after that.
 
 Issues and PRs are welcome. The code is deliberately small and dependency-light
 (one Electron dependency for the app; the plugin uses only Node built-ins plus
-this repo's `shared/` modules - no npm packages at runtime).
+this repo's `shared/` modules - no npm packages at runtime). Run `npm test`
+before sending a PR.
 
 ## License
 
