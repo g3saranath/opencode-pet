@@ -12,6 +12,7 @@
 //
 // It stays dependency-free at runtime: only Node built-ins plus this repo's
 // shared/ modules. The V2 runtime supplies everything else.
+import type { Plugin } from "@opencode/plugin";
 import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -27,11 +28,30 @@ import { isProcessAlive } from "../shared/process-alive.js";
 // window. So "is opencode connected?" cannot be answered by this process being
 // alive; we ask the OS whether the app is open. While it is, the plugin pulses
 // a heartbeat and the overlay stays awake as long as it sees a recent pulse.
+//
+// Probe quickly while the pet is up so closing the app is noticed in ~2s, and
+// back off while it is asleep so an idle service is not spawning a process
+// every couple of seconds forever.
 const PROBE_MS = 2 * 1000;
+const IDLE_PROBE_MS = 10 * 1000;
 
-// The desktop app's process image (the same name for its main and helper
-// processes), so any match means the app is open.
-const APP_IMAGE = "OpenCode.exe";
+// The overlay naps after 45s without a pulse, so writing the heartbeat (and
+// refreshing the owner claim) every 10s is plenty.
+const BEAT_MS = 10 * 1000;
+
+// The desktop app's process name per platform. Windows is the only one with a
+// known default. Elsewhere there is no verified name, and guessing wrong would
+// keep the pet from ever waking (TUI-only users have no desktop process at
+// all), so detection is opt-in through OPENCODE_PET_APP_PROCESS and the pet
+// otherwise stays awake while opencode runs.
+const DEFAULT_APP_PROCESS: Record<string, string> = { win32: "OpenCode.exe" };
+const APP_PROCESS = process.env.OPENCODE_PET_APP_PROCESS || DEFAULT_APP_PROCESS[process.platform] || "";
+
+// OPENCODE_PET_DEBUG=1 records event types this plugin does not handle in
+// ~/.cache/opencode-pet/debug.log, so a renamed event shows up instead of the
+// pet silently going quiet.
+const DEBUG = process.env.OPENCODE_PET_DEBUG === "1";
+const DEBUG_FILE = path.join(DIR, "debug.log");
 
 // V2 runs setup once per open location. Only the owner of this file drives the
 // pet, so two open projects cannot write the state file at the same time and
@@ -41,8 +61,8 @@ const OWNER_FILE = path.join(DIR, "owner.pid");
 const OWNER_CHECK_MS = 5 * 1000;
 
 // Where the Electron overlay lives. Honour OPENCODE_PET_DIR first, then fall
-// back to the checkout this plugin file actually lives in (resolves the
-// ~/.config/opencode/plugin symlink back here), then the usual clone paths.
+// back to the checkout this plugin file actually lives in (following any
+// symlink back here), then the usual clone paths.
 function ownCheckoutDir(): string {
   try {
     const self = fs.realpathSync(fileURLToPath(import.meta.url));
@@ -85,10 +105,16 @@ let pendingExtra: Record<string, unknown> = {};
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
 const THROTTLE_MS = 120;
 
+// The bubble's tool and target while a tool is in flight, so streamed reasoning
+// during the call does not wipe "editing app.js" back to a generic verb.
+let currentTool: Record<string, unknown> = {};
+
 // V2 tool events do not carry the tool name; the name arrives earlier on
 // session.tool.input.started, keyed by the same call id. Remember it so the
-// "called" line can be labelled.
+// "called" line can be labelled. Capped because a call interrupted before
+// "called" would otherwise leave its entry behind for the life of the service.
 const callNames = new Map<string, string>();
+const CALL_NAMES_MAX = 64;
 
 // Streaming buffers, keyed by stream id (assistant message + kind + ordinal).
 const streamBuf = new Map<string, string>();
@@ -125,8 +151,6 @@ const TOOL_ALIASES: Record<string, string> = {
   ls: "list",
   web_search: "websearch",
   web_fetch: "webfetch",
-  webfetch: "webfetch",
-  todowrite: "todowrite",
 };
 
 function normalizeTool(name: unknown): string {
@@ -177,7 +201,20 @@ function relayDelta(id: string, icon: string, kind: string, delta: unknown) {
   streamBuf.set(id, acc);
   if (!acc.trim()) return;
   streamLine(id, icon, kind, tail(acc));
-  emitThrottled(activeTools > 0 ? "working" : "thinking");
+  emitThrottled(busyState(), busyExtra());
+}
+
+function busyState(): PetState {
+  return activeTools > 0 ? "working" : "thinking";
+}
+
+function busyExtra(): Record<string, unknown> {
+  return activeTools > 0 ? currentTool : {};
+}
+
+function resetTools() {
+  activeTools = 0;
+  currentTool = {};
 }
 
 function relayEnd(id: string, icon: string, kind: string, finalText: unknown) {
@@ -203,21 +240,30 @@ function beat() {
 
 // Is the desktop app open right now? The background service this plugin runs in
 // survives the app closing, so process.pid says nothing about the app. We ask
-// the OS instead. tasklist is a stock Windows tool, no admin needed. On other
-// platforms there is no image name to check, so we keep the old always-awake
-// behaviour rather than guessing.
+// the OS instead: tasklist on Windows (stock, no admin needed), pgrep -x
+// elsewhere. With no process name configured, or no way to ask, we keep the old
+// always-awake behaviour rather than guessing.
 function desktopAppPresent(): Promise<boolean> {
   return new Promise((resolve) => {
-    if (process.platform !== "win32") {
+    if (!APP_PROCESS) {
       resolve(true);
       return;
     }
-    execFile(
-      "tasklist",
-      ["/FI", `IMAGENAME eq ${APP_IMAGE}`, "/NH"],
-      { windowsHide: true },
-      (err, stdout) => resolve(!err && /OpenCode\.exe/i.test(String(stdout))),
-    );
+    if (process.platform === "win32") {
+      execFile(
+        "tasklist",
+        ["/FI", `IMAGENAME eq ${APP_PROCESS}`, "/NH"],
+        { windowsHide: true },
+        (err, stdout) =>
+          resolve(!err && String(stdout).toLowerCase().includes(APP_PROCESS.toLowerCase())),
+      );
+      return;
+    }
+    // pgrep exits 0 on a match and 1 on none; a missing pgrep stays awake.
+    execFile("pgrep", ["-x", APP_PROCESS], (err: any) => {
+      if (!err) resolve(true);
+      else resolve(typeof err.code !== "number");
+    });
   });
 }
 
@@ -227,10 +273,11 @@ function desktopAppPresent(): Promise<boolean> {
 // V2 can run several setup() calls in the same server process (one per open
 // location), so process.pid alone cannot tell two instances apart. Each setup
 // gets a random token; the owner file records "<pid>:<token>". The owner
-// rewrites it on every heartbeat, so a file whose mtime has gone stale means
-// the owning instance is gone even while the process is still alive.
+// rewrites it every BEAT_MS, so a file whose mtime has gone stale means the
+// owning instance is gone even while the process is still alive. The stale
+// window covers a couple of missed refreshes at the slower idle probe rate.
 // ---------------------------------------------------------------------------
-const OWNER_STALE_MS = 10 * PROBE_MS;
+const OWNER_STALE_MS = 3 * BEAT_MS;
 
 function createOwnership() {
   const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -304,22 +351,56 @@ function truncate(s: unknown, n: number): string {
   const str = String(s ?? "").replace(/\s+/g, " ").trim();
   return str.length > n ? str.slice(0, n - 1) + "\u2026" : str;
 }
+// Split a shell command on ; && || | while leaving quoted text alone, so
+// `grep "a|b"` or `git commit -m "x && y"` stay one segment.
+function splitSegments(cmd: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quote = "";
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (quote) {
+      cur += c;
+      if (c === quote) quote = "";
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      cur += c;
+      continue;
+    }
+    const two = cmd.slice(i, i + 2);
+    if (two === "&&" || two === "||") {
+      out.push(cur);
+      cur = "";
+      i++;
+      continue;
+    }
+    if (c === ";" || c === "|") {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
 // Turn a shell command into a short, human label so the pet does not paste a
 // wall of `cd ...; && ...` into the bubble. Prefers the segment that names a
 // known tool (npm, git, gh, ...), otherwise the first token.
 function bashLabel(cmd: unknown): string {
   const full = String(cmd ?? "").trim();
   if (!full) return "running";
-  const segments = full
-    .split(/;|&&|\|\||\|/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const segments = splitSegments(full);
   // Skip variable assignments and navigation so `cd X; npm test` and
   // `$p = ...; Get-Content $p` label the real work, not the setup step.
   const SKIP = /^(\$?[\w:\\.-]+\s*=|cd\b|pushd\b|popd\b|set-location\b)/i;
   const pool = segments.filter((s) => !SKIP.test(s));
   const seg = pool[0] || segments[0] || full;
-  const tokens = seg.replace(/^&\s*/, "").split(/\s+/);
+  let tokens = seg.replace(/^&\s*/, "").split(/\s+/);
+  if (tokens[0] === "sudo" && tokens.length > 1) tokens = tokens.slice(1);
   const head = tokens[0].toLowerCase();
   const sub = (tokens[1] || "").toLowerCase();
 
@@ -455,7 +536,8 @@ function bashLabel(cmd: unknown): string {
     "convertfrom-json": "parsing json", "convertto-json": "writing json",
   };
   if (PS[head]) return PS[head];
-  return "running " + truncate(head, 14);
+  // Scripts run by path read better by file name: ./scripts/deploy.sh -> deploy.sh
+  return "running " + truncate(head.split(/[\\/]/).pop() || head, 14);
 }
 
 // Raw command shown in the activity feed (the bubble gets the friendly label).
@@ -610,24 +692,42 @@ function streamId(kind: string, d: any): string {
   return `${d?.assistantMessageID || "msg"}:${kind}:${d?.ordinal ?? 0}`;
 }
 
+const seenUnhandled = new Set<string>();
+
+function logUnhandled(type: string) {
+  if (!DEBUG || seenUnhandled.has(type)) return;
+  seenUnhandled.add(type);
+  try {
+    fs.mkdirSync(DIR, { recursive: true });
+    fs.appendFileSync(DEBUG_FILE, `${new Date().toISOString()} unhandled event: ${type}\n`);
+  } catch {
+    /* best effort */
+  }
+}
+
 function handleEvent(ev: any) {
   if (!ev || !ev.type) return;
   const d = ev.data || {};
 
   switch (ev.type) {
-    // A prompt was accepted: show it and start thinking.
+    // A prompt was accepted: show it and start thinking. The prompt text lives
+    // on the inbox item's payload (Session.Inbox.UserPayload).
     case "session.inbox.enqueued": {
       const item = d.item || {};
-      const text = String(item.text ?? item.prompt ?? "").replace(/\s+/g, " ").trim();
+      const raw = !item.type || item.type === "user" ? (item.payload?.text ?? item.text ?? "") : "";
+      const text = String(raw).replace(/\s+/g, " ").trim();
       if (text) logStep("\uD83E\uDDD1", "you: " + text, "you", 80);
       lastTodoLabel = "";
-      emit(activeTools > 0 ? "working" : "thinking");
+      emit(busyState(), busyExtra());
       break;
     }
 
     // Remember the tool name so the later "called" line can be labelled.
     case "session.tool.input.started":
-      if (d.id) callNames.set(d.id, normalizeTool(d.name));
+      if (d.id) {
+        if (callNames.size >= CALL_NAMES_MAX) callNames.delete(callNames.keys().next().value as string);
+        callNames.set(d.id, normalizeTool(d.name));
+      }
       break;
 
     case "session.tool.called": {
@@ -648,21 +748,24 @@ function handleEvent(ev: any) {
             ? `${meta[1]} ${detail}`
             : meta[1];
       logStep(meta[0], feedText, "step");
-      emit("working", { tool, detail });
+      currentTool = { tool, detail };
+      emit("working", currentTool);
       break;
     }
 
     case "session.tool.success": {
       activeTools = Math.max(0, activeTools - 1);
+      if (activeTools === 0) currentTool = {};
       callNames.delete(d.id);
       const line = snippet(extractText(d), 54);
       if (line) logStep("\u21B3", line, "out");
-      emit(activeTools > 0 ? "working" : "thinking");
+      emit(busyState(), busyExtra());
       break;
     }
 
     case "session.tool.failed": {
       activeTools = Math.max(0, activeTools - 1);
+      if (activeTools === 0) currentTool = {};
       callNames.delete(d.id);
       const msg = d.error?.message || d.error?.name || snippet(extractText(d), 54) || "tool failed";
       logStep("\uD83D\uDCA5", "error: " + msg, "error");
@@ -703,40 +806,42 @@ function handleEvent(ev: any) {
     }
 
     case "session.execution.started": {
-      emit(activeTools > 0 ? "working" : "thinking");
+      emit(busyState(), busyExtra());
       break;
     }
 
     case "session.execution.succeeded": {
-      activeTools = 0;
+      resetTools();
       if (feed[feed.length - 1]?.kind !== "done") logStep("\u2728", "finished", "done");
       emit("happy");
       break;
     }
 
     case "session.execution.failed": {
-      activeTools = 0;
+      resetTools();
       const msg = d.error?.message || d.error?.name || snippet(extractText(d), 54) || "execution failed";
       logStep("\uD83D\uDCA5", "error: " + msg, "error");
       emit("error", { detail: truncate(msg, 22) });
       break;
     }
 
+    // The user stopped the turn; nothing more is coming, so rest rather than
+    // sit on "thinking" until the next prompt.
     case "session.execution.interrupted": {
-      activeTools = 0;
+      resetTools();
       logStep("\u23F8", "stopped", "wait");
-      emit("thinking");
+      emit("idle");
       break;
     }
 
     case "session.idle":
-      activeTools = 0;
+      resetTools();
       if (feed[feed.length - 1]?.kind !== "done") logStep("\u2728", "finished", "done");
       emit("happy");
       break;
 
     case "session.error": {
-      activeTools = 0;
+      resetTools();
       const err = d.error;
       const msg = err?.name || err?.message || err?.data?.message || "something broke";
       logStep("\uD83D\uDCA5", "error: " + msg, "error");
@@ -744,16 +849,23 @@ function handleEvent(ev: any) {
       break;
     }
 
+    // Permission.Request carries an optional message, the action (shell, edit,
+    // ...) and the resources it applies to.
     case "permission.asked": {
-      const title = d.title || d.action || d.permission || d.resource || "needs approval";
-      logStep("\u2753", String(title), "wait");
+      const resource = Array.isArray(d.resources) ? d.resources[0] : "";
+      const asked = d.action ? `allow ${d.action}${resource ? " " + resource : ""}?` : "";
+      const title = String(d.message || asked || "needs approval");
+      logStep("\u2753", title, "wait");
       emit("waiting", { detail: truncate(title, 24) });
       break;
     }
 
     case "permission.replied":
-      emit("thinking");
+      emit(busyState(), busyExtra());
       break;
+
+    default:
+      logUnhandled(String(ev.type));
   }
 }
 
@@ -765,29 +877,39 @@ export { bashLabel };
 export default {
   id: "opencode-pet",
 
-  async setup(ctx: any) {
+  async setup(ctx: Plugin.Context) {
     const ownership = createOwnership();
     const controller = new AbortController();
-    let probeTimer: ReturnType<typeof setInterval> | undefined;
+    let probeTimer: ReturnType<typeof setTimeout> | undefined;
     let ownerTimer: ReturnType<typeof setInterval> | undefined;
     let started = false;
     let stopped = false;
-    let probing = false;
+    let lastBeat = 0;
+    let lastOwnerRefresh = 0;
     // Whether the pet should be up right now. Flipped only on an actual
     // open/close of the app, so a manual quit sticks until the app reopens.
     let petUp = false;
 
+    // Stop pulsing so the overlay naps (and quits ~15s later) if nobody takes
+    // over. Used on unload, where a reload would otherwise kill the pet only to
+    // relaunch it a moment later.
+    const releasePet = () => {
+      try {
+        fs.unlinkSync(HEARTBEAT_FILE);
+      } catch {}
+      lastBeat = 0;
+      emit("sleeping");
+    };
+
     // Close the pet now that the app is gone. Deleting the heartbeat and
     // signalling the overlay makes it vanish immediately; the overlay's own
-    // stale-heartbeat check is only the 15s fallback for when this never runs.
+    // stale-heartbeat check (45s to nap, then 15s to quit) is only the fallback
+    // for when this never runs.
     // Only signal a pid we have confirmed is still alive, so a stale pet.pid
     // (pet crashed, pid recycled by the OS) cannot make us kill an unrelated
     // process.
     const closePet = () => {
-      try {
-        fs.unlinkSync(HEARTBEAT_FILE);
-      } catch {}
-      emit("sleeping");
+      releasePet();
       const pid = readPetPid();
       if (pid && isProcessAlive(pid)) {
         try {
@@ -803,16 +925,24 @@ export default {
 
     // Ask the OS whether the app is open, and keep the pet in step. Runs on a
     // timer because the service this plugin lives in never learns when the
-    // desktop app closes.
+    // desktop app closes. Each probe schedules the next, quickly while the pet
+    // is up and slowly while it is asleep, so probes never overlap.
     const probe = async () => {
-      if (probing || stopped) return;
-      probing = true;
+      if (stopped) return;
       try {
+        const now = Date.now();
         // Keep the owner claim fresh; a stale claim lets another instance take over.
-        ownership.refresh();
+        if (now - lastOwnerRefresh >= BEAT_MS) {
+          ownership.refresh();
+          lastOwnerRefresh = now;
+        }
         const present = await desktopAppPresent();
+        if (stopped) return;
         if (present) {
-          beat();
+          if (Date.now() - lastBeat >= BEAT_MS) {
+            beat();
+            lastBeat = Date.now();
+          }
           if (!petUp) {
             // The app opened (or reopened): wake the pet.
             petUp = true;
@@ -826,7 +956,7 @@ export default {
           closePet();
         }
       } finally {
-        probing = false;
+        if (!stopped) probeTimer = setTimeout(probe, petUp ? PROBE_MS : IDLE_PROBE_MS);
       }
     };
 
@@ -835,9 +965,6 @@ export default {
       started = true;
 
       void probe();
-      probeTimer = setInterval(() => {
-        void probe();
-      }, PROBE_MS);
 
       const subscribe = ctx?.event?.subscribe;
       if (typeof subscribe !== "function") return;
@@ -856,10 +983,13 @@ export default {
     const stop = () => {
       if (stopped) return;
       stopped = true;
-      if (probeTimer) clearInterval(probeTimer);
+      if (probeTimer) clearTimeout(probeTimer);
       if (ownerTimer) clearInterval(ownerTimer);
       controller.abort();
-      closePet();
+      // Unload covers both a full shutdown and a plugin reload. Only stop
+      // pulsing here: on a reload the next instance resumes within a probe and
+      // the pet stays up; on shutdown the overlay naps and quits by itself.
+      releasePet();
       ownership.release();
     };
 
@@ -882,4 +1012,4 @@ export default {
       else ownership.release();
     };
   },
-};
+} satisfies Plugin.Plugin;

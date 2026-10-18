@@ -28,6 +28,9 @@
   },
   "author": "g3saranath <gayathrisaranath1998@gmail.com>",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
   "devDependencies": {
     "electron": "^33.0.0"
   }

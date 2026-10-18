@@ -45,8 +45,10 @@ The character itself changes with the work - not just a badge on top.
   with a mood colour-grade and its own flight motion.
 - **Auto wake / sleep.** Follows the desktop app, not the background service.
   The pet appears when you open the app, vanishes when you close it, and comes
-  back when you reopen it. The stale-heartbeat timeout is only the fallback if
-  the plugin cannot close it first.
+  back when you reopen it. Automatic on Windows; on macOS and Linux it needs
+  `OPENCODE_PET_APP_PROCESS` (see [Platform](#platform)), otherwise the pet
+  stays awake while opencode runs. The stale-heartbeat timeout is only the
+  fallback if the plugin cannot close it first.
 - **Stays put & draggable.** Sits where you leave him; drag to reposition
   (remembered across restarts).
 - **Sound, sizing, and a right-click menu.** Completion chime (mutable), four
@@ -73,9 +75,9 @@ there are no ports and nothing to configure.
 
 ## Install
 
-Requires [opencode](https://opencode.ai) **2.x** (the V2 desktop app) and
-[Node.js](https://nodejs.org). This fork's plugin uses the V2 plugin contract,
-so OpenCode 1 will not load it.
+Requires [opencode](https://opencode.ai) **2.x** and
+[Node.js](https://nodejs.org) 22.18 or newer. The plugin uses the V2 plugin
+contract, so OpenCode 1 will not load it.
 
 ```sh
 git clone https://github.com/g3saranath/opencode-pet.git ~/opencode-pet
@@ -83,30 +85,27 @@ cd ~/opencode-pet
 npm install                                     # downloads Electron
 ```
 
-Then register the plugin with opencode (global). Create
-`~/.config/opencode/plugin/pet.ts` as a small shim that points at your clone:
+Then register the plugin with opencode by adding its absolute path to `plugins`
+in your global config, `~/.config/opencode/opencode.jsonc` (create the file if
+it doesn't exist):
 
-```ts
-export { default } from "file:///Users/you/opencode-pet/plugin/pet.ts?v=1";
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["/Users/you/opencode-pet/plugin/pet.ts"],
+}
 ```
 
-Use the absolute path to your clone as a `file://` URL (three slashes, forward
-slashes). On Windows it looks like
-`file:///D:/Projects/opencode-pet/plugin/pet.ts?v=1`.
+On Windows, use a `file://` URL with forward slashes, for example
+`"file:///D:/Projects/opencode-pet/plugin/pet.ts"`.
 
-Then **restart opencode**. Scrybe appears automatically and starts relaying the
-session. (Plugins load only at startup, so restart after any change.)
+Then **restart opencode** (or run `opencode service restart`). Scrybe appears
+automatically and starts relaying the session.
 
-> **Shim, don't symlink.** The real plugin is `plugin/pet.ts` in your clone and
-> it imports this repo's `shared/` modules. OpenCode V2 reads the entry file
-> itself and does not follow a symlink placed there, so a symlinked `pet.ts`
-> fails to load with "Plugin must export a default definition". The shim is a
-> real file that re-exports the clone, so the plugin and its imports still
-> resolve back to the repo. Copy the plugin file itself only if you also copy
-> `shared/`.
-
-> After editing the plugin, bump the `?v=` number and restart opencode to pick
-> up the new code.
+> **Point at the clone, don't copy.** `plugin/pet.ts` imports this repo's
+> `shared/` modules, so the config entry must point at the file inside your
+> clone. Copying `pet.ts` on its own into `~/.config/opencode/plugins/` will
+> fail to load.
 
 > Prefer not to auto-launch on session start? Set `OPENCODE_PET_NO_LAUNCH=1` and
 > run the overlay yourself with `npm start`.
@@ -129,11 +128,13 @@ session. (Plugins load only at startup, so restart after any change.)
 | -------------------------- | ----------------------------------------------------------------- |
 | `OPENCODE_PET_DIR`         | Path to this checkout (defaults to the checkout the plugin lives in) |
 | `OPENCODE_PET_NO_LAUNCH=1` | Don't auto-launch the overlay from the plugin                     |
+| `OPENCODE_PET_APP_PROCESS` | Desktop app process name to follow for wake / sleep (default `OpenCode.exe` on Windows, off elsewhere) |
+| `OPENCODE_PET_DEBUG=1`     | Log event types the plugin doesn't handle to `debug.log`          |
 
 Runtime files live in `~/.cache/opencode-pet/`: `state.json` (current relay),
 `heartbeat` (connection pulse), `owner.pid` (which plugin instance drives the
 pet), `pet.pid` (overlay pid), `pos.json` (position), `config.json` (size / mute /
-log preferences).
+log preferences), and `debug.log` (only with `OPENCODE_PET_DEBUG=1`).
 
 ## For AI agents and other IDEs
 
@@ -176,10 +177,15 @@ square, transparent-background PNGs with the same names and restart the overlay.
 Built and tested on macOS (Apple Silicon). It uses standard Electron overlay
 APIs, so Linux / Windows should work with minor tweaks - PRs welcome.
 
-Auto wake / sleep reads the desktop process image, which is wired up for
-Windows (`OpenCode.exe`). On macOS and Linux it falls back to staying awake
-while opencode runs, so the pet will not auto-vanish when you close the app
-there yet.
+Auto wake / sleep checks whether the desktop app's process is running. On
+Windows it looks for `OpenCode.exe` out of the box. On macOS and Linux, set
+`OPENCODE_PET_APP_PROCESS` to the app's exact process name (matched with
+`pgrep -x`) to turn it on. Without it, the pet stays awake while opencode runs
+and won't vanish when you close the app. That's also the right setting if you
+only use the terminal client, since there is no desktop process to follow.
+
+If the plugin can't close the pet itself, the overlay naps about 45 seconds
+after the last heartbeat and quits 15 seconds after that.
 
 ## Contributing
 

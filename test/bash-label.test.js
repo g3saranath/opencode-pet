@@ -1,17 +1,20 @@
 "use strict";
 
-const { test } = require("node:test");
+const { test, before } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
-// The plugin ships as TypeScript; Node 24 strips the types on import.
+// The plugin ships as TypeScript; Node 22.18+ strips the types on import.
 const PET_URL = pathToFileURL(path.join(__dirname, "..", "plugin", "pet.ts")).href;
 
 let bashLabel;
 
-test("bash labels load", async () => {
+before(async () => {
   ({ bashLabel } = await import(PET_URL));
+});
+
+test("bash labels load", () => {
   assert.equal(typeof bashLabel, "function");
 });
 
@@ -93,6 +96,14 @@ const CASES = [
   ],
   // unknown falls back to the command name
   ["somecustomtool --flag value", "running somecustomtool"],
+  // scripts run by path use the file name
+  ["./scripts/deploy.sh --prod", "running deploy.sh"],
+  // sudo is skipped so the real command wins
+  ["sudo rm -rf /tmp/x", "removing"],
+  // separators inside quotes do not split the command
+  ['git commit -m "fix a | b && c"', "committing"],
+  ['grep -r "foo|bar" . | head', "running grep"],
+  ["cd a && cd b", "navigating"],
 ];
 
 for (const [cmd, expected] of CASES) {
