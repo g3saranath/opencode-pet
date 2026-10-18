@@ -12,37 +12,32 @@ const ALL_STATES = [
   "idle", "thinking", "working", "waiting", "happy", "error", "sleeping",
 ];
 
-// tool -> [bubbleEmoji, label, floatingProp]
-const TOOL_LOOK = {
-  edit:      ["\u270F\uFE0F", "editing", "\u270D\uFE0F"],   // ✏️ ✍️
-  write:     ["\u270F\uFE0F", "writing", "\u270D\uFE0F"],
-  patch:     ["\u270F\uFE0F", "editing", "\u270D\uFE0F"],
-  read:      ["\uD83D\uDCD6", "reading", "\uD83D\uDCD6"],   // 📖
-  bash:      ["\u2699\uFE0F", "running", "\uD83E\uDDEA"],    // ⚙️ 🧪
-  grep:      ["\uD83D\uDD0D", "searching", "\uD83D\uDD0D"],  // 🔍
-  glob:      ["\uD83D\uDCC2", "looking", "\uD83D\uDD2E"],    // 📂 🔮
-  list:      ["\uD83D\uDCC2", "looking", "\uD83D\uDD2E"],
-  webfetch:  ["\uD83C\uDF10", "browsing", "\uD83E\uDD89"],   // 🌐 🦉
-  websearch: ["\uD83C\uDF10", "searching", "\uD83E\uDD89"],
-  task:      ["\uD83E\uDD16", "delegating", "\uD83E\uDE84"], // 🤖 🪄
-  todowrite: ["\uD83D\uDCDD", "planning", "\uD83D\uDCDC"],   // 📝 📜
-  question:  ["\u2753", "asking", "\u2753"],
-};
+// Shared label tables and the "what to show" decision live in labels.js so the
+// tests can exercise them without a DOM.
+const { TOOL_LOOK, WORKING_VERBS, resolveBubble } = window.PetLabels;
 const ALL_TOOL_CLASSES = Object.keys(TOOL_LOOK).map((t) => "tool-" + t);
-
-const STATE_LOOK = {
-  thinking: [null, ""],
-  working:  ["\uD83E\uDE84", "casting"],
-  waiting:  ["\u2753", "your call?"],
-  happy:    ["\u2728", "done!"],
-  error:    ["\uD83D\uDCA5", "uh oh"],
-  sleeping: [null, ""],
-  idle:     [null, ""],
-};
 
 let relaxTimer = null;
 let prevState = "idle";
 let muted = false;
+let verbTimer = null;
+let verbIdx = 0;
+
+function stopVerbs() {
+  if (verbTimer) { clearInterval(verbTimer); verbTimer = null; }
+}
+
+function startVerbs(pool) {
+  stopVerbs();
+  if (!pool || !pool.length) return;
+  verbIdx = Math.floor(Math.random() * pool.length);
+  const tick = () => {
+    bubbleText.textContent = " " + pool[verbIdx % pool.length];
+    verbIdx++;
+  };
+  tick();
+  verbTimer = setInterval(tick, 2000);
+}
 
 // ---------------------------------------------------------------------------
 // Activity feed
@@ -95,19 +90,18 @@ function setState(payload) {
   for (const c of ALL_TOOL_CLASSES) stage.classList.remove(c);
   const tool = payload && payload.tool;
 
-  let emoji = null, text = "", prop = "";
-  if (tool && TOOL_LOOK[tool]) {
-    stage.classList.add("tool-" + tool);
-    [emoji, text, prop] = TOOL_LOOK[tool];
-  } else if (STATE_LOOK[state]) {
-    [emoji, text] = STATE_LOOK[state];
-  }
-  if (payload && payload.detail) text = payload.detail;
+  const detail = payload && payload.detail ? String(payload.detail) : "";
+
+  const { emoji, text, prop, toolClass, generic } = resolveBubble(state, tool, detail);
+  if (toolClass) stage.classList.add(toolClass);
+
+  stopVerbs();
 
   if (emoji) {
     bubbleEmoji.textContent = emoji;
     bubbleText.textContent = text ? " " + text : "";
     bubble.classList.add("show");
+    if (generic) startVerbs(WORKING_VERBS);
   } else {
     bubble.classList.remove("show");
   }
