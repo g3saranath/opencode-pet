@@ -5,6 +5,7 @@
   "main": "app/main.js",
   "type": "commonjs",
   "scripts": {
+    "postinstall": "install-electron",
     "start": "electron .",
     "scrybe": "electron .",
     "test": "node --test test/*.test.js"
@@ -32,6 +33,6 @@
     "node": ">=22.18"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^44.9.0"
   }
 }
