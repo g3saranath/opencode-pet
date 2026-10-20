@@ -13,7 +13,7 @@
 // It stays dependency-free at runtime: only Node built-ins plus this repo's
 // shared/ modules. The V2 runtime supplies everything else.
 import type { Plugin } from "@opencode/plugin";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -22,6 +22,7 @@ import { DIR, PID_FILE, HEARTBEAT_FILE } from "../shared/paths.js";
 import { createStateWriter, type PetState } from "../shared/state-protocol.js";
 import { resolveElectronBin, hasElectron } from "../shared/electron-bin.js";
 import { isProcessAlive } from "../shared/process-alive.js";
+import { resolveAppProcess, probeDesktopApp, resetProbeCache } from "../shared/desktop-follow.js";
 
 // V2 loads this plugin into opencode's long-lived background service, which
 // outlives the desktop app: the service keeps running after you close the
@@ -39,13 +40,11 @@ const IDLE_PROBE_MS = 10 * 1000;
 // refreshing the owner claim) every 10s is plenty.
 const BEAT_MS = 10 * 1000;
 
-// The desktop app's process name per platform. Windows is the only one with a
-// known default. Elsewhere there is no verified name, and guessing wrong would
-// keep the pet from ever waking (TUI-only users have no desktop process at
-// all), so detection is opt-in through OPENCODE_PET_APP_PROCESS and the pet
-// otherwise stays awake while opencode runs.
-const DEFAULT_APP_PROCESS: Record<string, string> = { win32: "OpenCode.exe" };
-const APP_PROCESS = process.env.OPENCODE_PET_APP_PROCESS || DEFAULT_APP_PROCESS[process.platform] || "";
+// If the OS probe keeps failing we cannot tell whether the app is open. Stop
+// pulsing after this many consecutive failures so the overlay's stale-heartbeat
+// fallback can end the session instead of the pet hanging on forever. One bad
+// probe does not close anything because the counter resets on success.
+const PROBE_FAILURE_LIMIT = 3;
 
 // OPENCODE_PET_DEBUG=1 records event types this plugin does not handle in
 // ~/.cache/opencode-pet/debug.log, so a renamed event shows up instead of the
@@ -239,33 +238,10 @@ function beat() {
 }
 
 // Is the desktop app open right now? The background service this plugin runs in
-// survives the app closing, so process.pid says nothing about the app. We ask
-// the OS instead: tasklist on Windows (stock, no admin needed), pgrep -x
-// elsewhere. With no process name configured, or no way to ask, we keep the old
-// always-awake behaviour rather than guessing.
-function desktopAppPresent(): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (!APP_PROCESS) {
-      resolve(true);
-      return;
-    }
-    if (process.platform === "win32") {
-      execFile(
-        "tasklist",
-        ["/FI", `IMAGENAME eq ${APP_PROCESS}`, "/NH"],
-        { windowsHide: true },
-        (err, stdout) =>
-          resolve(!err && String(stdout).toLowerCase().includes(APP_PROCESS.toLowerCase())),
-      );
-      return;
-    }
-    // pgrep exits 0 on a match and 1 on none; a missing pgrep stays awake.
-    execFile("pgrep", ["-x", APP_PROCESS], (err: any) => {
-      if (!err) resolve(true);
-      else resolve(typeof err.code !== "number");
-    });
-  });
-}
+// survives the app closing, so process.pid says nothing about the app. The
+// shared probe answers "present", "absent", or "unknown"; only "absent" is
+// proof that the app is gone. With no process name configured (OFF mode) it
+// answers "present" so the old always-awake behaviour is kept.
 
 // ---------------------------------------------------------------------------
 // Owner election (see OWNER_FILE above).
@@ -874,10 +850,26 @@ function handleEvent(ev: any) {
 // ---------------------------------------------------------------------------
 export { bashLabel };
 
+type DesktopProbeResult = "present" | "absent" | "unknown";
+
+type SetupOverrides = {
+  probeApp?: () => Promise<DesktopProbeResult>;
+  probeMs?: number;
+  idleProbeMs?: number;
+  beatMs?: number;
+};
+
 export default {
   id: "opencode-pet",
 
-  async setup(ctx: Plugin.Context) {
+  async setup(ctx: Plugin.Context, overrides: SetupOverrides = {}) {
+    const follow = resolveAppProcess();
+    resetProbeCache();
+    const probeApp = overrides.probeApp || (() => probeDesktopApp(follow));
+    const probeMs = overrides.probeMs ?? PROBE_MS;
+    const idleProbeMs = overrides.idleProbeMs ?? IDLE_PROBE_MS;
+    const beatMs = overrides.beatMs ?? BEAT_MS;
+
     const ownership = createOwnership();
     const controller = new AbortController();
     let probeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -886,41 +878,54 @@ export default {
     let stopped = false;
     let lastBeat = 0;
     let lastOwnerRefresh = 0;
+    // Whether the last probe actually saw the app. null means "not known yet"
+    // (or the probe is failing); only false is proof that the app is gone.
+    let lastPresent: boolean | null = follow.mode === "off" ? true : null;
+    let probeFailures = 0;
     // Whether the pet should be up right now. Flipped only on an actual
     // open/close of the app, so a manual quit sticks until the app reopens.
     let petUp = false;
 
-    // Stop pulsing so the overlay naps (and quits ~15s later) if nobody takes
-    // over. Used on unload, where a reload would otherwise kill the pet only to
-    // relaunch it a moment later.
-    const releasePet = () => {
+    // Stop pulsing without changing the displayed state. Used when the desktop
+    // probe keeps failing: the overlay's own stale-heartbeat fallback then gets
+    // a chance to close the pet, while a recovered probe can resume beating.
+    const stopPulsing = () => {
       try {
         fs.unlinkSync(HEARTBEAT_FILE);
       } catch {}
       lastBeat = 0;
+    };
+
+    // Stop pulsing and show the sleeping state. Used on unload and on close.
+    const releasePet = () => {
+      stopPulsing();
       emit("sleeping");
+    };
+
+    // Signal the overlay to quit, without touching the displayed state. Only a
+    // pid we have confirmed is still alive is signalled, so a stale pet.pid
+    // (pet crashed, pid recycled by the OS) cannot kill an unrelated process.
+    const signalPetToClose = () => {
+      const pid = readPetPid();
+      if (!pid || !isProcessAlive(pid)) return false;
+      try {
+        process.kill(pid);
+      } catch {
+        /* already exited between the probe and the signal */
+      }
+      try {
+        fs.unlinkSync(PID_FILE);
+      } catch {}
+      return true;
     };
 
     // Close the pet now that the app is gone. Deleting the heartbeat and
     // signalling the overlay makes it vanish immediately; the overlay's own
     // stale-heartbeat check (45s to nap, then 15s to quit) is only the fallback
     // for when this never runs.
-    // Only signal a pid we have confirmed is still alive, so a stale pet.pid
-    // (pet crashed, pid recycled by the OS) cannot make us kill an unrelated
-    // process.
     const closePet = () => {
       releasePet();
-      const pid = readPetPid();
-      if (pid && isProcessAlive(pid)) {
-        try {
-          process.kill(pid);
-        } catch {
-          /* already exited between the probe and the signal */
-        }
-        try {
-          fs.unlinkSync(PID_FILE);
-        } catch {}
-      }
+      signalPetToClose();
     };
 
     // Ask the OS whether the app is open, and keep the pet in step. Runs on a
@@ -932,14 +937,16 @@ export default {
       try {
         const now = Date.now();
         // Keep the owner claim fresh; a stale claim lets another instance take over.
-        if (now - lastOwnerRefresh >= BEAT_MS) {
+        if (now - lastOwnerRefresh >= beatMs) {
           ownership.refresh();
           lastOwnerRefresh = now;
         }
-        const present = await desktopAppPresent();
+        const result = await probeApp();
         if (stopped) return;
-        if (present) {
-          if (Date.now() - lastBeat >= BEAT_MS) {
+        if (result === "present") {
+          probeFailures = 0;
+          lastPresent = true;
+          if (Date.now() - lastBeat >= beatMs) {
             beat();
             lastBeat = Date.now();
           }
@@ -950,13 +957,29 @@ export default {
             emit("idle");
             launchPet();
           }
-        } else if (petUp) {
-          // The app closed: leave now.
-          petUp = false;
-          closePet();
+        } else if (result === "absent") {
+          probeFailures = 0;
+          // Close even when petUp is false: a previous plugin instance can
+          // leave an overlay running after the app is already gone.
+          if (lastPresent !== false || petUp) {
+            lastPresent = false;
+            petUp = false;
+            closePet();
+          }
+        } else {
+          // The probe itself failed (timeout, spawn error, permissions). Do not
+          // treat that as "closed"; count it and keep the last known state.
+          probeFailures++;
+          if (probeFailures >= PROBE_FAILURE_LIMIT) {
+            // We can no longer prove the app is open. Stop the heartbeat and let
+            // the overlay's stale-heartbeat fallback end the session.
+            lastPresent = null;
+            petUp = false;
+            stopPulsing();
+          }
         }
       } finally {
-        if (!stopped) probeTimer = setTimeout(probe, petUp ? PROBE_MS : IDLE_PROBE_MS);
+        if (!stopped) probeTimer = setTimeout(probe, petUp ? probeMs : idleProbeMs);
       }
     };
 
@@ -980,17 +1003,34 @@ export default {
       })();
     };
 
-    const stop = () => {
+    const stop = async () => {
       if (stopped) return;
       stopped = true;
       if (probeTimer) clearTimeout(probeTimer);
       if (ownerTimer) clearInterval(ownerTimer);
       controller.abort();
-      // Unload covers both a full shutdown and a plugin reload. Only stop
-      // pulsing here: on a reload the next instance resumes within a probe and
-      // the pet stays up; on shutdown the overlay naps and quits by itself.
       releasePet();
       ownership.release();
+
+      // OFF mode has no desktop signal, so unloading is the only shutdown
+      // cue: close now instead of leaving an overlay with no owner.
+      if (follow.mode === "off") {
+        signalPetToClose();
+        return;
+      }
+
+      // If the last probe already saw the app gone, close without asking again.
+      if (lastPresent === false) {
+        signalPetToClose();
+        return;
+      }
+
+      // Unload covers both a full shutdown and a plugin reload. A fresh probe
+      // tells them apart: present means reload and the pet stays; absent means
+      // shutdown and the pet closes now. An unknown answer leaves the overlay's
+      // stale-heartbeat fallback in charge.
+      const result = await probeApp().catch(() => "unknown" as const);
+      if (result === "absent") signalPetToClose();
     };
 
     if (ownership.tryClaim()) {
@@ -1006,9 +1046,9 @@ export default {
     }
 
     // Cleanup: V2 runs this when the plugin unloads (server shutdown, reload).
-    return () => {
+    return async () => {
       if (ownerTimer) clearInterval(ownerTimer);
-      if (started) stop();
+      if (started) await stop();
       else ownership.release();
     };
   },

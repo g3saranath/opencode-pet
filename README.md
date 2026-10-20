@@ -136,7 +136,7 @@ automatically and starts relaying the session.
 | -------------------------- | ----------------------------------------------------------------- |
 | `OPENCODE_PET_DIR`         | Path to this checkout (defaults to the checkout the plugin lives in) |
 | `OPENCODE_PET_NO_LAUNCH=1` | Don't auto-launch the overlay from the plugin                     |
-| `OPENCODE_PET_APP_PROCESS` | Desktop app process name to follow for wake / sleep (default `OpenCode.exe` on Windows, off elsewhere) |
+| `OPENCODE_PET_APP_PROCESS` | Desktop app process name to follow for wake / sleep (default `OpenCode.exe` on Windows, off elsewhere). Set it to `off`, `none`, or an empty value to disable follow on Windows |
 | `OPENCODE_PET_DEBUG=1`     | Log event types the plugin doesn't handle to `debug.log`          |
 
 Runtime files live in `~/.cache/opencode-pet/`: `state.json` (current relay),
@@ -188,14 +188,20 @@ The overlay runs on Electron 44, which needs macOS 13 or newer, or 64-bit
 Windows or Linux.
 
 Auto wake / sleep checks whether the desktop app's process is running. On
-Windows it looks for `OpenCode.exe` out of the box. On macOS and Linux, set
+Windows it looks for `OpenCode.exe` out of the box, then follows the main app
+process rather than Electron helper processes. That matters because crashpad,
+GPU, and renderer helpers share the image name and can outlive the app, which
+used to keep the pet awake forever. On macOS and Linux, set
 `OPENCODE_PET_APP_PROCESS` to the app's exact process name (matched with
 `pgrep -x`) to turn it on. Without it, the pet stays awake while opencode runs
 and won't vanish when you close the app. That's also the right setting if you
 only use the terminal client, since there is no desktop process to follow.
 
-If the plugin can't close the pet itself, the overlay naps about 45 seconds
-after the last heartbeat and quits 15 seconds after that.
+If the plugin cannot close the pet itself, the overlay naps about 45 seconds
+after the last heartbeat and quits 15 seconds after that. It counts consecutive
+missed heartbeats and resets on a fresh one, so a single stale read does not put
+the pet to sleep. With desktop follow turned off, the plugin keeps the pet awake
+while the background service runs and closes it when the plugin unloads.
 
 ## Contributing
 

@@ -6,6 +6,7 @@ const path = require("path");
 const { DIR, PID_FILE, HEARTBEAT_FILE, STATES } = require("../shared/paths");
 const { readState } = require("../shared/state-protocol");
 const { isProcessAlive } = require("../shared/process-alive");
+const { createConnectionMonitor } = require("../shared/connection-monitor");
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -35,8 +36,15 @@ let config = { scale: 1.0, muted: false, feed: true };
 let win = null;
 let lastStateUpdate = Date.now();
 let lastState = "idle";
-let sleepingSince = 0;
 const startedAt = Date.now();
+
+// Counts consecutive missed heartbeats so a single stale read cannot sleep the
+// pet. A valid heartbeat resets the counter; 15s after the first miss the
+// monitor reports "quit" and the overlay exits.
+const connection = createConnectionMonitor({
+  heartbeatTimeoutMs: HEARTBEAT_TIMEOUT_MS,
+  sleepQuitMs: SLEEP_QUIT_MS,
+});
 
 // Drag state
 let dragging = false;
@@ -295,16 +303,16 @@ function checkConnection() {
   // fall back to the timestamp alone.
   const pidAlive = heartbeatPid ? isProcessAlive(heartbeatPid) : true;
 
-  // Grace window on startup so the pet doesn't flash "sleeping" before the
-  // first heartbeat arrives.
-  const connected =
-    (pidAlive && now - lastBeat < HEARTBEAT_TIMEOUT_MS) ||
-    now - startedAt < HEARTBEAT_TIMEOUT_MS;
+  const status = connection.sample({ now, lastBeat, pidAlive, startedAt });
 
-  if (connected) {
-    sleepingSince = 0;
+  if (status === "connected") {
     // opencode is running: if we were napping, wake up.
     if (lastState === "sleeping") pushState({ state: "idle" });
+    return;
+  }
+
+  if (status === "quit") {
+    app.quit();
     return;
   }
 
@@ -312,8 +320,6 @@ function checkConnection() {
   // relaunch a fresh pet without an orphaned sleeping window hanging around.
   if (lastState !== "sleeping") {
     pushState({ state: "sleeping" });
-  } else if (sleepingSince && now - sleepingSince > SLEEP_QUIT_MS) {
-    app.quit();
   }
 }
 
@@ -322,11 +328,8 @@ function checkConnection() {
 // ---------------------------------------------------------------------------
 function pushState(payload) {
   if (!payload || !STATES.includes(payload.state)) return;
-  const wasSleeping = lastState === "sleeping";
   lastState = payload.state;
   lastStateUpdate = Date.now();
-  if (payload.state === "sleeping" && !wasSleeping) sleepingSince = Date.now();
-  if (payload.state !== "sleeping") sleepingSince = 0;
   if (win && !win.isDestroyed()) {
     win.webContents.send("pet:state", payload);
   }
