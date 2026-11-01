@@ -243,6 +243,11 @@ missed heartbeats and resets on a fresh one, so a single stale read does not put
 the pet to sleep. With desktop follow turned off, the plugin keeps the pet awake
 while the background service runs and closes it when the plugin unloads.
 
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for completed and planned phases. Phase 1 is
+complete. Phase 1.5 and later phases are planned and not started.
+
 ## Contributing
 
 Issues and PRs are welcome. The code is deliberately small and dependency-light
