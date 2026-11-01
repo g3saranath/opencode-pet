@@ -25,6 +25,7 @@ import { readPetPid, closePetProcess } from "../shared/pet-process.js";
 import { resolveAppProcess, probeDesktopApp, resetProbeCache } from "../shared/desktop-follow.js";
 import { resolveAppDir, launchPet as launchPetProcess } from "../shared/pet-launcher.js";
 import { readConfig } from "../shared/pet-config.js";
+import { registerSession, unregisterSession, liveSessions } from "../shared/session-registry.js";
 
 // V2 loads this plugin into opencode's long-lived background service, which
 // outlives the desktop app: the service keeps running after you close the
@@ -51,6 +52,12 @@ const BEAT_MS = 10 * 1000;
 // fallback can end the session instead of the pet hanging on forever. One bad
 // probe does not close anything because the counter resets on success.
 const PROBE_FAILURE_LIMIT = 3;
+
+// Unload asks the OS once more whether the app is still open (reload vs.
+// shutdown). On Windows a cache miss runs tasklist and then PowerShell, which
+// can take several seconds, so cap the wait and treat a slow answer as
+// "unknown": the overlay's stale-heartbeat fallback then decides.
+const UNLOAD_PROBE_MS = 1500;
 
 // OPENCODE_PET_DEBUG=1 records event types this plugin does not handle in
 // ~/.cache/opencode-pet/debug.log, so a renamed event shows up instead of the
@@ -826,7 +833,30 @@ function handleEvent(ev: any) {
 // ---------------------------------------------------------------------------
 const V1_HEARTBEAT_MS = 15 * 1000;
 let v1HeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+// server() calls alive in this process. They share one heartbeat timer, which
+// only stops when the last of them disposes.
+let v1Instances = 0;
 let v1UserMsgId: string | null = null;
+
+// Another opencode 1.x session is taking over: rewrite the heartbeat with its
+// pid. The overlay requires the heartbeat's pid to be alive, so leaving ours
+// there after this process exits would put the pet to sleep (and quit it 15s
+// later) before the other session's next beat lands.
+function handOffHeartbeat(pid: number) {
+  try {
+    const raw = fs.readFileSync(HEARTBEAT_FILE, "utf8").trim();
+    const owner = parseInt(raw.split(/\s+/)[1] ?? "", 10);
+    if (owner && owner !== process.pid) return; // someone else already beats
+  } catch {
+    /* no heartbeat yet */
+  }
+  try {
+    fs.mkdirSync(DIR, { recursive: true });
+    fs.writeFileSync(HEARTBEAT_FILE, `${Date.now()} ${pid}`);
+  } catch {
+    /* best effort */
+  }
+}
 
 // Streamed text. V1 sends the full part on message.part.updated (the part
 // boundary) and the next chunk on message.part.delta for the same part id. We
@@ -900,7 +930,25 @@ type SetupOverrides = {
   idleProbeMs?: number;
   disabledProbeMs?: number;
   beatMs?: number;
+  unloadProbeMs?: number;
 };
+
+// Resolves with the probe's answer, or "unknown" if it takes longer than `ms`.
+function probeWithin(
+  probe: () => Promise<DesktopProbeResult>,
+  ms: number,
+): Promise<DesktopProbeResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<DesktopProbeResult>((resolve) => {
+    timer = setTimeout(() => resolve("unknown"), ms);
+  });
+  const answer = Promise.resolve()
+    .then(probe)
+    .catch(() => "unknown" as const);
+  return Promise.race([answer, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 
 const petPlugin = {
   id: "opencode-pet",
@@ -913,6 +961,7 @@ const petPlugin = {
     const idleProbeMs = overrides.idleProbeMs ?? IDLE_PROBE_MS;
     const disabledProbeMs = overrides.disabledProbeMs ?? DISABLED_PROBE_MS;
     const beatMs = overrides.beatMs ?? BEAT_MS;
+    const unloadProbeMs = overrides.unloadProbeMs ?? UNLOAD_PROBE_MS;
 
     const ownership = createOwnership();
     const controller = new AbortController();
@@ -1079,9 +1128,9 @@ const petPlugin = {
 
       // Unload covers both a full shutdown and a plugin reload. A fresh probe
       // tells them apart: present means reload and the pet stays; absent means
-      // shutdown and the pet closes now. An unknown answer leaves the overlay's
-      // stale-heartbeat fallback in charge.
-      const result = await probeApp().catch(() => "unknown" as const);
+      // shutdown and the pet closes now. An unknown or slow answer leaves the
+      // overlay's stale-heartbeat fallback in charge.
+      const result = await probeWithin(probeApp, unloadProbeMs);
       if (result === "absent") closePetProcess();
     };
 
@@ -1132,12 +1181,14 @@ const petPlugin = {
 
     // Wake the pet the moment opencode connects, but only when automatic
     // launch is enabled. A manual launch from the GUI still works.
+    const sessionId = registerSession(DIR);
+    v1Instances += 1;
     beat();
     logStep("\u2728", "connected", "meta");
     emit("idle");
     launchPet();
-    if (v1HeartbeatTimer) clearInterval(v1HeartbeatTimer);
-    v1HeartbeatTimer = setInterval(beat, V1_HEARTBEAT_MS);
+    if (!v1HeartbeatTimer) v1HeartbeatTimer = setInterval(beat, V1_HEARTBEAT_MS);
+    let disposed = false;
 
     return {
       // A user prompt / model turn kicked off.
@@ -1231,12 +1282,26 @@ const petPlugin = {
         }
       },
 
-      // opencode is shutting down: stop the heartbeat and close the overlay
-      // now, exactly like V2. Without the pid signal the overlay lingers ~15s
-      // after opencode 1 exits.
+      // opencode is shutting down: close the overlay now, exactly like V2,
+      // unless another 1.x session (another terminal, or another project in
+      // this process) still uses it. Without the pid signal the overlay
+      // lingers ~15s after the last session exits.
       dispose: async () => {
-        if (v1HeartbeatTimer) clearInterval(v1HeartbeatTimer);
-        v1HeartbeatTimer = undefined;
+        if (!disposed) {
+          disposed = true;
+          unregisterSession(DIR, sessionId);
+          v1Instances = Math.max(0, v1Instances - 1);
+          if (v1Instances === 0 && v1HeartbeatTimer) {
+            clearInterval(v1HeartbeatTimer);
+            v1HeartbeatTimer = undefined;
+          }
+        }
+
+        const others = liveSessions(DIR);
+        if (others.length > 0) {
+          handOffHeartbeat(others[0].pid);
+          return;
+        }
         closePetProcess();
         emit("sleeping");
       },

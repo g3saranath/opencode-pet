@@ -187,6 +187,31 @@ test("OFF mode closes the pet on unload without a desktop signal", async () => {
   }
 });
 
+test("a slow unload probe cannot hold up shutdown", async () => {
+  resetDir();
+  const pet = await startLivePet();
+  let unloading = false;
+  const cleanup = await mod.default.setup(idleContext, {
+    ...fast,
+    unloadProbeMs: 60,
+    // Present while running; on unload the probe hangs, like a PowerShell
+    // lookup stuck on a busy Windows machine.
+    probeApp: () => (unloading ? new Promise(() => {}) : Promise.resolve("present")),
+  });
+
+  try {
+    assert.ok(await waitFor(() => fs.existsSync(HEARTBEAT_FILE)), "pet woke up");
+    unloading = true;
+    const started = Date.now();
+    await cleanup();
+    assert.ok(Date.now() - started < 1000, "unload returned promptly");
+    assert.equal(isProcessAlive(pet.pid), true, "an unknown answer does not kill the pet");
+  } finally {
+    stopPet(pet);
+    resetDir();
+  }
+});
+
 test("three failed probes stop the heartbeat but do not kill the pet", async () => {
   resetDir();
   const pet = await startLivePet();
