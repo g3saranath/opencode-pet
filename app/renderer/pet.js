@@ -203,10 +203,14 @@ function applyConfig(cfg) {
   if (typeof cfg.pet === "string") loadPet(cfg.pet);
 }
 
-const PACKS = {
-  clack: { url: "../clack.codex-pet/spritesheet.webp", cols: 8, frameW: 192, frameH: 208, rows: 11, map: { idle: 0, thinking: 7, working: 2, waiting: 3, happy: 4, error: 6, sleeping: 5 } },
-  "shane-hollander": { url: "../shane-hollander.codex-pet/spritesheet.webp", cols: 8, frameW: 192, frameH: 208, rows: 11, map: { idle: 0, thinking: 7, working: 2, waiting: 3, happy: 4, error: 6, sleeping: 5 } },
-};
+// Registered sprite-sheet packs (see packs.js). Unknown ids, including the
+// default "scrybe", keep the built-in art.
+const PACKS = window.PetPacks && typeof window.PetPacks === "object" ? window.PetPacks : {};
+
+function findPack(id) {
+  if (typeof id !== "string" || !id || id === "scrybe") return null;
+  return Object.prototype.hasOwnProperty.call(PACKS, id) ? PACKS[id] : null;
+}
 
 function loadPet(id) {
   if (packPlayer) {
@@ -221,9 +225,9 @@ function loadPet(id) {
   sprite.style.backgroundPosition = "";
   sprite.style.backgroundRepeat = "";
 
-  if (!id || id === "scrybe" || !PACKS[id]) return;
+  const pack = findPack(id);
+  if (!pack) return;
 
-  const pack = PACKS[id];
   const img = new Image();
   img.onload = () => {
     stage.classList.add("pack-mode");
@@ -233,12 +237,19 @@ function loadPet(id) {
 
     let frame = 0;
     let last = performance.now();
+    // The rAF loop runs every display frame, but the sheet only advances every
+    // `interval` ms, so only touch the style when the visible frame changes.
+    let lastPosition = "";
     const player = { raf: 0, active: false, tick: null };
     const tick = (now) => {
       if (!player.active) return;
       const row = pack.map[currentState] != null ? pack.map[currentState] : 0;
       const col = frame % pack.cols;
-      sprite.style.backgroundPosition = "-" + (col * pack.frameW) + "px -" + (row * pack.frameH) + "px";
+      const position = "-" + (col * pack.frameW) + "px -" + (row * pack.frameH) + "px";
+      if (position !== lastPosition) {
+        sprite.style.backgroundPosition = position;
+        lastPosition = position;
+      }
       const interval = 120 / (petConfig.animationSpeed > 0 ? petConfig.animationSpeed : 1);
       if (now - last >= interval) {
         frame += 1;
