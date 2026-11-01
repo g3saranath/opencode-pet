@@ -143,7 +143,9 @@ point adds desktop-app follow (wake when the desktop app opens, close when it
 closes, reopen included). opencode 1.x has no long-lived background service, so
 the V1 entry point keeps the older behaviour: the pet is awake while opencode is
 running and naps when it disconnects. On 1.x the desktop-app follow and the
-multi-window owner election do not apply.
+multi-window owner election do not apply. Several 1.x terminals share one pet:
+closing a terminal leaves the pet running for the others, and the last one to
+exit closes it.
 
 ## Controls
 
@@ -154,19 +156,27 @@ multi-window owner election do not apply.
 | Resize        | Right-click ▸ Size ▸ Small / Medium / Large / Huge      |
 | Mute sounds   | Right-click ▸ Mute sounds                               |
 | Show/hide log | Right-click ▸ Show activity log                         |
-| Quit          | Right-click ▸ Quit pet                                  |
-| Start / stop  | `Ctrl`+`Alt`+`Shift`+`P` starts a stopped pet, or stops a running one |
-| Hide / show   | `/pet off` hides, `/pet on` shows, `/pet` toggles visibility |
+| Quit          | Right-click ▸ Quit pet, or `Ctrl`+`Alt`+`Shift`+`P`     |
+| Start / stop  | With the [GUI plugin](#gui-control-panel): `Ctrl`+`Alt`+`Shift`+`P` also starts a stopped pet |
+| Hide / show   | With the [GUI plugin](#gui-control-panel): `/pet off` hides, `/pet on` shows, `/pet` toggles |
 | Run manually  | `npm start`                                             |
 
 ## GUI control panel
 
 The experimental GUI plugin is a control panel only. It does not show a second
 pet. It can enable or disable the companion, show or hide it without stopping
-the process, choose the active pet, change scale and position, change animation
-speed, mute sounds, toggle the activity log, and auto-hide the pet when OpenCode
-is fullscreen. It also owns the `Ctrl`+`Alt`+`Shift`+`P` start/stop shortcut,
-because a stopped overlay cannot start itself.
+the process, change scale and position, change animation speed, mute sounds,
+toggle the activity log, and auto-hide the pet when an OpenCode window is
+fullscreen. Scrybe is the only pet that ships today; sprite-sheet packs are
+registered in `app/renderer/packs.js` once their art is in the repo.
+
+It also turns `Ctrl`+`Alt`+`Shift`+`P` into a start / stop switch, because a
+stopped overlay cannot start itself. The overlay and the GUI plugin never hold
+the key at the same time (`shortcut.owner` decides): while the overlay holds it
+the key quits the pet, and once the pet has quit the GUI plugin takes the key
+over so the next press starts it again. The shortcut needs OpenCode to expose
+Electron's `globalShortcut` to plugins; without it, use the settings page or
+`/pet`.
 
 The floating Electron pet remains the only pet.
 
@@ -178,11 +188,14 @@ The floating Electron pet remains the only pet.
 | `OPENCODE_PET_NO_LAUNCH=1` | Don't auto-launch the overlay from the plugin                     |
 | `OPENCODE_PET_APP_PROCESS` | Desktop app process name to follow for wake / sleep (default `OpenCode.exe` on Windows, off elsewhere). Set it to `off`, `none`, or an empty value to disable follow on Windows |
 | `OPENCODE_PET_DEBUG=1`     | Log event types the plugin doesn't handle to `debug.log`          |
+| `OPENCODE_PET_FORCE=1`     | Start the overlay even when Pets are disabled in the settings page (for `npm start` debugging) |
 
 Runtime files live in `~/.cache/opencode-pet/`: `state.json` (current relay),
 `heartbeat` (connection pulse), `owner.pid` (which plugin instance drives the
-pet), `pet.pid` (overlay pid), `pos.json` (position), `config.json` (size / mute /
-log preferences), and `debug.log` (only with `OPENCODE_PET_DEBUG=1`).
+pet), `pet.pid` (overlay pid), `pos.json` (position), `config.json` (settings,
+shared with the settings page), `shortcut.owner` (which process holds the
+global shortcut), `sessions/` (live opencode 1.x sessions), and `debug.log`
+(only with `OPENCODE_PET_DEBUG=1`).
 
 ## For AI agents and other IDEs
 

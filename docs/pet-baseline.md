@@ -25,8 +25,9 @@ Runtime behavior:
 
 - single-instance lock
 - pid file written on startup and removed on quit
-- global shortcut Ctrl+Alt+Shift+P starts the pet when it is stopped and stops the process when it is running (registered by the GUI plugin, because a stopped pet cannot start itself)
-- click-through by default, disabled only over the pet
+- global shortcut Ctrl+Alt+Shift+P quits the running pet (registered by the overlay); with the GUI plugin it also starts a stopped pet. `shortcut.owner` keeps the overlay and the GUI plugin from both registering it
+- click-through by default, disabled only over the pet (the top 240x214 of the stage, scaled); the activity log stays click-through
+- the overlay never writes config.json from its settings poll; menu changes write only the field they change
 - drag moves the window and saves position
 - scale changes resize around the center
 - state watcher reads state.json
@@ -35,7 +36,7 @@ Runtime behavior:
 
 ## Existing tests
 
-Run `npm test`. Expected result: 222 passing tests.
+Run `npm test`. Expected result: all tests pass (244 at the time of writing).
 
 ## Manual smoke checklist
 
