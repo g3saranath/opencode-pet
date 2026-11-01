@@ -25,12 +25,6 @@ function normalizeDragOffset(raw, limit = MAX_DRAG_OFFSET) {
   return { x, y };
 }
 
-// Click-through is a strict boolean. Strings like "false" must not be coerced
-// to true, and objects must not be accepted at all.
-function normalizeIgnore(raw) {
-  return typeof raw === "boolean" ? raw : null;
-}
-
 // A state payload from the plugin or from the file bus. Only the fields the
 // renderer understands survive, and only with the right types.
 function normalizeStatePayload(raw, allowedStates) {
@@ -58,6 +52,5 @@ function normalizeStatePayload(raw, allowedStates) {
 module.exports = {
   MAX_DRAG_OFFSET,
   normalizeDragOffset,
-  normalizeIgnore,
   normalizeStatePayload,
 };

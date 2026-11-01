@@ -29,9 +29,11 @@ function shimBinary(appDir, isWin) {
 // Returns `{ bin, shell }` for the best available Electron, or undefined when
 // the app has no installed Electron at all.
 //
-// `appDir` may come from OPENCODE_PET_DIR or from a config file, so the binary
-// must still live under it after symlinks are resolved. Without this check a
-// crafted directory could point the launcher at an arbitrary executable.
+// The binary must still live under `appDir` after symlinks are resolved, so a
+// symlinked `node_modules/electron` cannot redirect the launch somewhere else.
+// This is a sanity check, not a trust boundary: whoever controls `appDir`
+// (OPENCODE_PET_DIR, the `app.dir` hint file) controls what is inside it, and
+// can place any executable at `node_modules/electron/dist/electron`.
 function resolveElectronBin(appDir, platform = process.platform) {
   if (!isUsableAppDir(appDir)) return undefined;
   const isWin = platform === "win32";

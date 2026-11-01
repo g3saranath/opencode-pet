@@ -51,6 +51,17 @@ function isSafeCmdPath(value) {
   return typeof value === "string" && value.length > 0 && !UNSAFE_CMD_CHARS.test(value);
 }
 
+// The argv for running a `.cmd` shim through cmd.exe, built the way Node's own
+// `shell: true` does it. `/s` strips the first and last quote from everything
+// after `/c`, so the whole command needs one extra pair of outer quotes, and
+// Node must not re-quote it (windowsVerbatimArguments). Without that, a path
+// with a space (C:\Users\John Smith\...) loses its quotes and cmd runs
+// `C:\Users\John`. `bin` has already passed isSafeCmdPath, so it contains no
+// quote of its own that could break out.
+function cmdShimArgs(bin) {
+  return ["/d", "/s", "/c", `""${bin}" ."`];
+}
+
 const LAUNCH_LOCK_NAME = "launch.lock";
 const DEFAULT_LOCK_HOLD_MS = 1500;
 
@@ -133,6 +144,8 @@ function launchPet(options) {
   };
 
   try {
+    // `spawn` is injectable so tests can assert the exact command line.
+    const run = typeof opts.spawn === "function" ? opts.spawn : spawn;
     let child;
     if (resolved.shell) {
       // Windows `.cmd` shim: run it through cmd.exe explicitly instead of
@@ -142,9 +155,12 @@ function launchPet(options) {
         return { launched: false, reason: "unsafe-path" };
       }
       const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
-      child = spawn(comspec, ["/d", "/s", "/c", resolved.bin, "."], spawnOptions);
+      child = run(comspec, cmdShimArgs(resolved.bin), {
+        ...spawnOptions,
+        windowsVerbatimArguments: true,
+      });
     } else {
-      child = spawn(resolved.bin, ["."], spawnOptions);
+      child = run(resolved.bin, ["."], spawnOptions);
     }
     child.on("error", () => {});
     child.unref();
@@ -173,6 +189,7 @@ module.exports = {
   acquireLaunchLock,
   releaseLaunchLock,
   isSafeCmdPath,
+  cmdShimArgs,
   hasElectron,
   resolveElectronBin,
 };

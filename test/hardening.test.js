@@ -23,7 +23,6 @@ const { isPathInside } = require("../shared/safe-path.js");
 const {
   MAX_DRAG_OFFSET,
   normalizeDragOffset,
-  normalizeIgnore,
   normalizeStatePayload,
 } = require("../shared/ipc-validation.js");
 const {
@@ -42,6 +41,7 @@ const {
   releaseLaunchLock,
   petAlreadyRunning,
   isSafeCmdPath,
+  cmdShimArgs,
   launchPet,
 } = require("../shared/pet-launcher.js");
 
@@ -78,6 +78,23 @@ describe("safe child environment", () => {
     assert.equal(isAllowedKey("PATH; rm -rf /"), false);
     assert.equal(isAllowedKey("A B"), false);
     assert.equal(isAllowedKey("$HOME"), false);
+  });
+
+  it("keeps what Electron needs to open a Linux display and download itself", () => {
+    for (const key of [
+      "XAUTHORITY",
+      "XDG_SESSION_TYPE",
+      "XDG_CURRENT_DESKTOP",
+      "ELECTRON_MIRROR",
+      "HTTPS_PROXY",
+      "https_proxy",
+      "NO_PROXY",
+    ]) {
+      assert.equal(isAllowedKey(key), true, key);
+    }
+    // Still no general pass-through for Electron or Node behaviour switches.
+    assert.equal(isAllowedKey("ELECTRON_RUN_AS_NODE"), false);
+    assert.equal(isAllowedKey("NODE_OPTIONS"), false);
   });
 });
 
@@ -153,14 +170,6 @@ describe("IPC payload validation", () => {
     ]) {
       assert.equal(normalizeDragOffset(bad), null, JSON.stringify(bad));
     }
-  });
-
-  it("accepts only real booleans for click-through", () => {
-    assert.equal(normalizeIgnore(true), true);
-    assert.equal(normalizeIgnore(false), false);
-    assert.equal(normalizeIgnore("false"), null);
-    assert.equal(normalizeIgnore(1), null);
-    assert.equal(normalizeIgnore({}), null);
   });
 
   it("normalizes a state payload and drops unknown fields", () => {
@@ -400,6 +409,61 @@ describe("duplicate launch prevention", () => {
     assert.equal(isSafeCmdPath('C:\\tools\\a"b.cmd'), false);
     assert.equal(isSafeCmdPath(""), false);
   });
+
+  it("quotes a shim path with spaces the way cmd /s expects", () => {
+    // /s strips the first and last quote after /c, so the whole command needs
+    // an outer pair, and Node must pass it through verbatim.
+    assert.deepEqual(cmdShimArgs("C:\\Users\\John Smith\\pet\\node_modules\\.bin\\electron.cmd"), [
+      "/d",
+      "/s",
+      "/c",
+      '""C:\\Users\\John Smith\\pet\\node_modules\\.bin\\electron.cmd" ."',
+    ]);
+
+    const appDir = path.join(dir, "John Smith", "pet");
+    const shim = path.join(appDir, "node_modules", ".bin", "electron.cmd");
+    fs.mkdirSync(path.dirname(shim), { recursive: true });
+    fs.writeFileSync(shim, "");
+    const calls = [];
+    const result = launchPet({
+      appDir,
+      skipLock: true,
+      skipRunningCheck: true,
+      platform: "win32",
+      spawn: (cmd, args, options) => {
+        calls.push({ cmd, args, options });
+        return { on() {}, unref() {} };
+      },
+    });
+    assert.equal(result.launched, true);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args, cmdShimArgs(shim));
+    assert.equal(calls[0].options.windowsVerbatimArguments, true);
+    assert.equal(calls[0].options.shell, false);
+  });
+
+  it("spawns the dist binary directly, without a shell", () => {
+    const appDir = path.join(dir, "app");
+    const bin = path.join(appDir, "node_modules", "electron", "dist", "electron");
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.writeFileSync(bin, "");
+    const calls = [];
+    const result = launchPet({
+      appDir,
+      skipLock: true,
+      skipRunningCheck: true,
+      platform: "linux",
+      spawn: (cmd, args, options) => {
+        calls.push({ cmd, args, options });
+        return { on() {}, unref() {} };
+      },
+    });
+    assert.equal(result.launched, true);
+    assert.equal(calls[0].cmd, bin);
+    assert.deepEqual(calls[0].args, ["."]);
+    assert.equal(calls[0].options.shell, false);
+    assert.equal(calls[0].options.windowsVerbatimArguments, undefined);
+  });
 });
 
 describe("preload subscriptions", () => {
@@ -445,6 +509,8 @@ describe("preload subscriptions", () => {
     );
 
     assert.ok(exposed, "bridge exposed");
+    // The main process owns click-through; the renderer has no way to set it.
+    assert.equal(exposed.setIgnore, undefined);
     const seen = [];
     const off = exposed.onVisibility((value) => seen.push(value));
     assert.equal(listeners.get("pet:visibility").length, 1);

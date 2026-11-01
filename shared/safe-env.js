@@ -44,6 +44,12 @@ const ALLOWED_EXACT = new Set([
   "XDG_CONFIG_HOME",
   "XDG_CACHE_HOME",
   "XDG_DATA_HOME",
+  // Linux display access. GDM keeps the X11 cookie outside $HOME, so without
+  // XAUTHORITY Electron cannot open the display. The session variables feed
+  // Electron's Wayland / X11 choice.
+  "XAUTHORITY",
+  "XDG_SESSION_TYPE",
+  "XDG_CURRENT_DESKTOP",
   "DISPLAY",
   "WAYLAND_DISPLAY",
   "DBUS_SESSION_BUS_ADDRESS",
@@ -54,6 +60,23 @@ const ALLOWED_EXACT = new Set([
   "NUMBER_OF_PROCESSORS",
   "OS",
   "PROCESSOR_ARCHITECTURE",
+  // The npm shim downloads Electron on first start when the install skipped
+  // scripts (see README). That download honours these mirror and proxy
+  // settings. Proxy URLs can carry credentials, but they only reach our own
+  // Electron/shim process, which needs them for exactly this download.
+  "ELECTRON_MIRROR",
+  "ELECTRON_CUSTOM_DIR",
+  "ELECTRON_CUSTOM_FILENAME",
+  "ELECTRON_GET_USE_PROXY",
+  "GLOBAL_AGENT_HTTP_PROXY",
+  "GLOBAL_AGENT_HTTPS_PROXY",
+  "GLOBAL_AGENT_NO_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
 ]);
 
 // Project-owned configuration. These are safe by definition: they are the

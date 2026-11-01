@@ -26,31 +26,16 @@ const STATE_FILE = path.join(DIR, "state.json");
 const PID_FILE = path.join(DIR, "pet.pid");
 const HEARTBEAT_FILE = path.join(DIR, "heartbeat");
 
-// Single source of truth for valid pet states — see shared/states.json
+// Single source of truth for valid pet states — see shared/states.json. The
+// fallback only matters if the JSON cannot be loaded (for example a bundler
+// that drops it); it must match states.json.
+const FALLBACK_STATES = ["idle", "thinking", "working", "waiting", "happy", "error", "sleeping"];
 let STATES;
 try {
   STATES = require("./states.json");
 } catch {
-  STATES = [
-    "idle",
-    "thinking",
-    "working",
-    "waiting",
-    "happy",
-    "error",
-    "sleeping",
-  ];
+  STATES = FALLBACK_STATES;
 }
-if (!Array.isArray(STATES)) {
-  STATES = [
-    "idle",
-    "thinking",
-    "working",
-    "waiting",
-    "happy",
-    "error",
-    "sleeping",
-  ];
-}
+if (!Array.isArray(STATES)) STATES = FALLBACK_STATES;
 
 module.exports = { DIR, STATE_FILE, PID_FILE, HEARTBEAT_FILE, STATES };
