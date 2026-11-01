@@ -22,7 +22,9 @@ const DEFAULT_CONFIG = {
   animationSpeed: 1.0,
   muted: false,
   autoHideFullscreen: false,
-  feed: false,
+  // The activity log was on by default before the settings page existed. Keep
+  // it that way so upgrading without a config.json changes nothing on screen.
+  feed: true,
   visible: true,
 };
 
@@ -90,7 +92,7 @@ function posPath(options) {
 function readConfig(options) {
   const file = configPath(options);
   try {
-    const raw = JSON.parse(require("fs").readFileSync(file, "utf8"));
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
     return normalizeConfig(raw);
   } catch {
     return { ...DEFAULT_CONFIG };

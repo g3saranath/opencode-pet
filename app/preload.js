@@ -19,7 +19,6 @@ contextBridge.exposeInMainWorld("pet", {
   onMove: (cb) => subscribe("pet:move", cb),
   onConfig: (cb) => subscribe("pet:config", cb),
   onVisibility: (cb) => subscribe("pet:visibility", cb),
-  setIgnore: (ignore) => ipcRenderer.send("pet:set-ignore", ignore),
   dragStart: (offset) => ipcRenderer.send("pet:drag-start", offset),
   dragEnd: () => ipcRenderer.send("pet:drag-end"),
   contextMenu: () => ipcRenderer.send("pet:context-menu"),

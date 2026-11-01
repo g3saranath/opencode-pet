@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, screen, ipcMain, Menu } = require("electron");
+const { app, BrowserWindow, screen, globalShortcut, ipcMain, Menu } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { DIR, PID_FILE, HEARTBEAT_FILE, STATES } = require("../shared/paths");
@@ -10,15 +10,12 @@ const { createConnectionMonitor } = require("../shared/connection-monitor");
 const {
   DEFAULT_CONFIG,
   readConfig,
-  writeConfig,
+  updateConfig,
   readPosition,
   writePosition,
 } = require("../shared/pet-config");
-const {
-  normalizeDragOffset,
-  normalizeIgnore,
-  normalizeStatePayload,
-} = require("../shared/ipc-validation");
+const { normalizeDragOffset, normalizeStatePayload } = require("../shared/ipc-validation");
+const { SHORTCUT, claimShortcut, releaseShortcut } = require("../shared/shortcut-owner");
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -83,6 +80,10 @@ let cursorTimer = null;
 let stateWatcher = null;
 let stateDebounceTimer = null;
 let ipcWired = false;
+// Click-through as last applied, so the 50ms cursor watch only calls into
+// Electron when the answer actually changes.
+let ignoringMouse = true;
+let quitShortcutHeld = false;
 
 function startTimer(name, fn, ms) {
   stopTimer(name);
@@ -156,14 +157,19 @@ function clearPidFile() {
 
 // ---------------------------------------------------------------------------
 // Config persistence
+//
+// config.json is shared with the settings page, which edits it while the pet
+// runs. The file is the source of truth: the overlay adopts it on every poll
+// (applyExternalConfig) and never writes its whole in-memory copy back. A
+// change made here (right-click menu) writes only the fields it changed,
+// merged into what is on disk right now, so a settings-page edit from a moment
+// ago is never overwritten with this process's older copy.
 // ---------------------------------------------------------------------------
 function loadConfig() {
   config = readConfig({ dir: DIR });
 }
-function saveConfig() {
-  // writeConfig normalizes and writes atomically. The in-memory copy is left
-  // untouched so a failed write cannot silently reset the running pet.
-  writeConfig(config, { dir: DIR });
+function persistConfig(patch) {
+  updateConfig(patch, { dir: DIR });
 }
 function sendConfig() {
   if (win && !win.isDestroyed()) win.webContents.send("pet:config", { ...config });
@@ -282,10 +288,11 @@ function createWindow() {
   // Float above everything, on every space, even over fullscreen apps.
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  // Click-through by default; the renderer flips this off only while the
-  // cursor is actually over the pet (so you can grab it), and back on
-  // otherwise (so clicks pass through the empty area).
+  // Click-through by default; the cursor watch below flips this off only
+  // while the cursor is over the pet (so you can grab it), and back on
+  // otherwise (so clicks pass through the log and the empty area).
   win.setIgnoreMouseEvents(true, { forward: true });
+  ignoringMouse = true;
 
   win.webContents.on("did-finish-load", () => {
     sendConfig();
@@ -314,40 +321,43 @@ function createWindow() {
 }
 
 // ---------------------------------------------------------------------------
-function setScale(scale) {
+// Resizing. `config` already holds the new scale / feed; this fits the window
+// to it, either around its centre (scale) or with the top-left fixed so the
+// log grows and shrinks downward (feed).
+// ---------------------------------------------------------------------------
+function resizeWindow(anchor) {
   if (!win || win.isDestroyed()) return;
   const b = win.getContentBounds();
-  const cx = b.x + b.width / 2;
-  const cy = b.y + b.height / 2;
-  config.scale = scale;
   const { w, h } = winSize();
-  const pos = clampPosition({ x: Math.round(cx - w / 2), y: Math.round(cy - h / 2) }, { w, h });
-  win.setContentBounds({
-    x: pos.x,
-    y: pos.y,
-    width: w,
-    height: h,
-  });
-  saveConfig();
+  const target =
+    anchor === "center"
+      ? { x: Math.round(b.x + b.width / 2 - w / 2), y: Math.round(b.y + b.height / 2 - h / 2) }
+      : { x: b.x, y: b.y };
+  const pos = clampPosition(target, { w, h });
+  win.setContentBounds({ x: pos.x, y: pos.y, width: w, height: h });
   savePosition();
+}
+
+// Right-click menu actions. Each one persists only the field it changes.
+function setScale(scale) {
+  if (!win || win.isDestroyed()) return;
+  config.scale = scale;
+  resizeWindow("center");
+  persistConfig({ scale });
   sendConfig();
 }
 
 function toggleMute() {
   config.muted = !config.muted;
-  saveConfig();
+  persistConfig({ muted: config.muted });
   sendConfig();
 }
 
 function setFeed(on) {
   if (!win || win.isDestroyed()) return;
-  const [x, y] = win.getPosition(); // keep top-left fixed; grow/shrink downward
   config.feed = on;
-  const { w, h } = winSize();
-  const pos = clampPosition({ x, y }, { w, h });
-  win.setContentBounds({ x: pos.x, y: pos.y, width: w, height: h });
-  saveConfig();
-  savePosition();
+  resizeWindow("top-left");
+  persistConfig({ feed: on });
   sendConfig();
 }
 
@@ -476,16 +486,35 @@ function moveTo(x, y) {
   win.setContentBounds({ x, y, width: w, height: h });
 }
 
-// Keep the window click-through only while the cursor is outside it.
-// The renderer used to do this hit test through a CSS-scaled stage, which
-// missed the pet on some display scales. Screen-space bounds cannot miss.
+// The part of the window that catches the mouse: the pet itself, i.e. the top
+// BASE_W x BASE_H of the stage, scaled from the top-left (see #stage and .pet
+// in style.css). The activity log below it stays click-through, so clicks
+// there reach the app underneath. The hit test runs here in screen space
+// rather than in the renderer, whose test through the CSS-scaled stage missed
+// the pet on some display scales.
+function petHitRect(bounds, scale) {
+  const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  return {
+    x: bounds.x,
+    y: bounds.y,
+    width: Math.min(bounds.width, Math.round(BASE_W * s)),
+    height: Math.min(bounds.height, Math.round(BASE_H * s)),
+  };
+}
+
+function setIgnoreMouse(ignore) {
+  if (!win || win.isDestroyed()) return;
+  if (ignore === ignoringMouse) return;
+  ignoringMouse = ignore;
+  win.setIgnoreMouseEvents(ignore, { forward: true });
+}
+
 function watchCursorTick() {
   if (!win || win.isDestroyed() || !win.isVisible() || dragging) return;
   const pt = screen.getCursorScreenPoint();
-  const b = win.getBounds();
-  const inside =
-    pt.x >= b.x && pt.x < b.x + b.width && pt.y >= b.y && pt.y < b.y + b.height;
-  win.setIgnoreMouseEvents(!inside, { forward: true });
+  const r = petHitRect(win.getContentBounds(), config.scale);
+  const inside = pt.x >= r.x && pt.x < r.x + r.width && pt.y >= r.y && pt.y < r.y + r.height;
+  setIgnoreMouse(!inside);
 }
 
 function checkConnection() {
@@ -533,6 +562,11 @@ function checkConnection() {
 // ---------------------------------------------------------------------------
 // State file (written by the opencode plugin, read via shared/state-protocol)
 // ---------------------------------------------------------------------------
+
+// Settings page -> overlay. Adopt the file wholesale, then apply side effects
+// for whatever changed. Nothing is written back from here: a write-back races
+// the settings page and can revert a field it changed in the same poll window
+// (for example "hide" right after a scale change).
 function applyExternalConfig() {
   const next = readConfig({ dir: DIR });
   if (!process.env.OPENCODE_PET_FORCE && next.enabled === false) {
@@ -540,36 +574,25 @@ function applyExternalConfig() {
     return;
   }
 
-  if (Number.isFinite(next.scale) && next.scale !== config.scale) {
-    setScale(next.scale);
-  }
-  if (typeof next.muted === "boolean" && next.muted !== config.muted) {
-    config.muted = next.muted;
-    saveConfig();
-    sendConfig();
-  }
-  if (typeof next.feed === "boolean" && next.feed !== config.feed) {
-    setFeed(next.feed);
-  }
-  if (Number.isFinite(next.animationSpeed) && next.animationSpeed !== config.animationSpeed) {
-    config.animationSpeed = next.animationSpeed;
-    saveConfig();
-    sendConfig();
-  }
-  if (typeof next.pet === "string" && next.pet && next.pet !== config.pet) {
-    config.pet = next.pet;
-    saveConfig();
+  const prev = config;
+  config = next;
+
+  const scaleChanged = next.scale !== prev.scale;
+  const feedChanged = next.feed !== prev.feed;
+  if (scaleChanged) resizeWindow("center");
+  else if (feedChanged) resizeWindow("top-left");
+
+  if (
+    scaleChanged ||
+    feedChanged ||
+    next.muted !== prev.muted ||
+    next.animationSpeed !== prev.animationSpeed ||
+    next.pet !== prev.pet
+  ) {
     sendConfig();
   }
 
-  config.enabled = next.enabled !== false;
-  config.autoHideFullscreen = next.autoHideFullscreen === true;
-  config.autoLaunch = next.autoLaunch !== false;
-
-  if (typeof next.visible === "boolean" && next.visible !== config.visible) {
-    config.visible = next.visible;
-    applyVisibility();
-  }
+  if (next.visible !== prev.visible) applyVisibility();
 }
 
 function applyExternalHidden() {
@@ -653,15 +676,6 @@ function wireIpc() {
   if (ipcWired) return;
   ipcWired = true;
 
-  ipcMain.on("pet:set-ignore", (event, ignore) => {
-    if (!isTrustedSender(event)) return;
-    const value = normalizeIgnore(ignore);
-    if (value === null) return;
-    if (win && !win.isDestroyed()) {
-      win.setIgnoreMouseEvents(value, { forward: true });
-    }
-  });
-
   ipcMain.on("pet:drag-start", (event, offset) => {
     if (!isTrustedSender(event)) return;
     if (!win || win.isDestroyed()) return;
@@ -695,6 +709,36 @@ function wireIpc() {
 }
 
 // ---------------------------------------------------------------------------
+// Quit shortcut
+//
+// Ctrl+Alt+Shift+P quits the pet from anywhere (not Ctrl+Alt+P, which
+// OpenCode uses). The optional GUI plugin binds the same key as a start / stop
+// switch, because a stopped overlay cannot start itself. shared/shortcut-owner
+// makes sure only one of the two processes holds the key at a time; whichever
+// is not holding it retries, so the key keeps working when the other goes away.
+// ---------------------------------------------------------------------------
+function registerQuitShortcut() {
+  if (quitShortcutHeld) return;
+  if (!claimShortcut(DIR)) return;
+  try {
+    quitShortcutHeld = globalShortcut.register(SHORTCUT, () => app.quit());
+  } catch {
+    quitShortcutHeld = false;
+  }
+  if (!quitShortcutHeld) releaseShortcut(DIR);
+}
+
+function releaseQuitShortcut() {
+  if (quitShortcutHeld) {
+    try {
+      globalShortcut.unregisterAll();
+    } catch {}
+    quitShortcutHeld = false;
+  }
+  releaseShortcut(DIR);
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 app.whenReady().then(() => {
@@ -720,6 +764,8 @@ app.whenReady().then(() => {
   startTimer("config", applyExternalConfig, 2000);
   startTimer("position", applyExternalPosition, 2000);
   startTimer("hidden", applyExternalHidden, 1000);
+  registerQuitShortcut();
+  startTimer("shortcut", registerQuitShortcut, 5000);
 
   // The visibility intent may have been persisted as false by the settings
   // page. Apply it now, after the window exists.
@@ -737,5 +783,6 @@ app.on("second-instance", () => {
 app.on("window-all-closed", () => app.quit());
 app.on("will-quit", () => {
   stopAllTimers();
+  releaseQuitShortcut();
   clearPidFile();
 });

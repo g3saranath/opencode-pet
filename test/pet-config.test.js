@@ -115,3 +115,11 @@ test("readConfig returns defaults when the file is missing", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the activity log stays on by default, as before the settings page", () => {
+  // Users who never opened the right-click menu have no config.json. Turning
+  // the log off by default would change their pet on upgrade.
+  assert.equal(DEFAULT_CONFIG.feed, true);
+  assert.equal(normalizeConfig({}).feed, true);
+  assert.equal(normalizeConfig({ feed: false }).feed, false);
+});
