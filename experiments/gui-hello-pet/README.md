@@ -14,22 +14,22 @@ The badge reads the existing pet state file through a small main entry. It does 
 
 The plugin code and the bundle were already correct. The app never loaded the plugin.
 
-OpenCode Desktop shows the GUI plugins that the OpenCode server reports. The server collects them from the `plugins` array in the config and from plugin files inside the config's plugin folders. This experiment was in neither place. The app's plugin list (port 28894 on 29 Oct 2026) held the built-in plugins plus `opencode-pet` from `~/.config/opencode/plugin/` and a broken `cbm-augment.ts`. There was no `opencode-pet-hello-gui` entry, so the app had nothing to show.
+OpenCode Desktop shows the GUI plugins that the OpenCode server reports. The server collects them from the `plugins` array in the config and from plugin files inside the config's plugin folders. This experiment was in neither place. The app's plugin list held the built-in plugins plus `opencode-pet` from `~/.config/opencode/plugin/`, but no `opencode-pet-hello-gui` entry, so the app had nothing to show.
 
 The "Experimental" settings page with "New icons" and "New model picker" is built into OpenCode Desktop. It comes from the app, not from this plugin.
 
-The fix is one config entry. It is already in place on this machine:
+The fix is one config entry (see [Load locally](#load-locally) below):
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
-    "D:/Personal/SHHH/Projects/opencode-pet-main-forked/experiments/gui-hello-pet"
+    "/absolute/path/to/opencode-pet/experiments/gui-hello-pet"
   ]
 }
 ```
 
-The global config is `C:\Users\yugda\.config\opencode\opencode.json`. The file from before the change is saved as `opencode.json.pre-hello-gui.bak`.
+Back up your global config (`~/.config/opencode/opencode.json`) before editing it.
 
 ## Why the page vanished a second time
 
@@ -58,7 +58,10 @@ npm run build
 
 The build writes `dist/gui-experimental.cjs`. The desktop app loads that file directly, so `node_modules` is not needed at runtime.
 
-`npm run typecheck` and `npm run lint` are also available.
+`npm run typecheck`, `npm run lint`, and `npm test` are also available. The tests check that
+`src/runtime.ts` matches the repo's `shared/` modules (the bundle carries its own copy of those
+rules because the app does not let it require files outside the bundle), and that the built
+bundle loads in a window host where Node modules are stubbed. Rebuild before running them.
 
 ## Load locally
 
@@ -68,7 +71,7 @@ Add the absolute path to this folder to the `plugins` array in the OpenCode conf
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
-    "D:/Personal/SHHH/Projects/opencode-pet-main-forked/experiments/gui-hello-pet"
+    "/absolute/path/to/opencode-pet/experiments/gui-hello-pet"
   ]
 }
 ```

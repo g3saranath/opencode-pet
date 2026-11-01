@@ -1,369 +1,29 @@
 import { Schema } from "effect"
 import { Command, Ipc, Plugin, SettingsPage } from "@opencode/plugin/gui"
 import * as fs from "node:fs"
-import * as os from "node:os"
 import * as path from "node:path"
 import en from "./i18n/en"
+import {
+  cacheDir,
+  closePetProcess,
+  createChangeGate,
+  createShortcutController,
+  launchPet,
+  parsePetCommand,
+  petAlreadyRunning,
+  readConfig,
+  readPosition,
+  resolveAppDir,
+  resolveCommand,
+  shortcutAction,
+  updateConfig,
+  writePosition,
+} from "./runtime"
+import type { GlobalShortcutApi, SpawnFn } from "./runtime"
 
-// (shared helpers inlined below)
-
-// (shared helpers inlined below)
-
-// ---------------------------------------------------------------------------
-// Self-contained copies of the shared helpers (inlined so the bundle has no
-// runtime requires to shared/). Canonical versions live in shared/.
-// ---------------------------------------------------------------------------
-
-const UNSAFE_CMD_CHARS = /[&|<>^%!"\r\n\0]/;
-
-function isSafeCmdPath(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && !UNSAFE_CMD_CHARS.test(value)
-}
-
-function safeHome(): string {
-  try {
-    if (typeof os.homedir === "function") {
-      const value = os.homedir()
-      if (typeof value === "string" && value) return value
-    }
-  } catch {
-    /* inert stub */
-  }
-  return process.env.HOME || process.env.USERPROFILE || ""
-}
-
-function isUsableAppDir(dir: unknown): boolean {
-  if (typeof dir !== "string" || !dir) return false
-  if (dir.includes("\0")) return false
-  if (!path.isAbsolute(dir)) return false
-  try {
-    return fs.statSync(dir).isDirectory()
-  } catch {
-    return false
-  }
-}
-
-const ALLOWED_EXACT = new Set([
-  "PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "SystemDrive", "windir", "WINDIR",
-  "COMSPEC", "ComSpec", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "HOMEDRIVE",
-  "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
-  "PROGRAMW6432", "USERNAME", "USER", "LOGNAME", "SHELL", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME",
-  "XDG_CACHE_HOME", "XDG_DATA_HOME", "DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS",
-  "LANG", "LC_ALL", "LC_CTYPE", "TZ", "NUMBER_OF_PROCESSORS", "OS", "PROCESSOR_ARCHITECTURE",
-])
-const ALLOWED_PREFIXES = ["OPENCODE_PET_"]
-const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
-
-function isAllowedKey(key: string): boolean {
-  if (!SAFE_KEY.test(key)) return false
-  if (ALLOWED_EXACT.has(key)) return true
-  return ALLOWED_PREFIXES.some((prefix) => key.startsWith(prefix))
-}
-
-function safeEnv(extra: Record<string, unknown> = {}, source: Record<string, unknown> = process.env): Record<string, string> {
-  const env: Record<string, string> = {}
-  if (source && typeof source === "object") {
-    for (const [key, value] of Object.entries(source)) {
-      if (value === undefined) continue
-      if (!isAllowedKey(key)) continue
-      env[key] = String(value)
-    }
-  }
-  if (extra && typeof extra === "object") {
-    for (const [key, value] of Object.entries(extra)) {
-      if (value === undefined || value === null) continue
-      if (!SAFE_KEY.test(key)) continue
-      env[key] = String(value)
-    }
-  }
-  return env
-}
-
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback
-  if (value < min) return min
-  if (value > max) return max
-  return value
-}
-
-const MIN_SCALE = 0.5
-const MAX_SCALE = 2.0
-const MIN_SPEED = 0.5
-const MAX_SPEED = 2.0
-
-function normalizeConfig(raw: unknown): Record<string, unknown> {
-  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
-  const config: Record<string, unknown> = {
-    version: 2,
-    enabled: true,
-    autoLaunch: true,
-    pet: "scrybe",
-    scale: 1.0,
-    animationSpeed: 1.0,
-    muted: false,
-    autoHideFullscreen: false,
-    feed: false,
-    visible: true,
-  }
-  if (typeof source.version === "number" && Number.isFinite(source.version)) {
-    config.version = Math.max(1, Math.round(source.version))
-  }
-  if (typeof source.enabled === "boolean") config.enabled = source.enabled
-  if (typeof source.autoLaunch === "boolean") config.autoLaunch = source.autoLaunch
-  if (typeof source.pet === "string" && source.pet.trim()) config.pet = source.pet.trim()
-  config.scale = clampNumber(source.scale, MIN_SCALE, MAX_SCALE, 1.0)
-  config.animationSpeed = clampNumber(source.animationSpeed, MIN_SPEED, MAX_SPEED, 1.0)
-  if (typeof source.muted === "boolean") config.muted = source.muted
-  if (typeof source.autoHideFullscreen === "boolean") config.autoHideFullscreen = source.autoHideFullscreen
-  if (typeof source.feed === "boolean") config.feed = source.feed
-  if (typeof source.visible === "boolean") config.visible = source.visible
-  return config
-}
-
-function readConfig(): Record<string, unknown> {
-  const file = path.join(cacheDir(), "config.json")
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, "utf8"))
-    return normalizeConfig(raw)
-  } catch {
-    return normalizeConfig(null)
-  }
-}
-
-function updateConfig(patch: Record<string, unknown>) {
-  const current = readConfig()
-  const merged = { ...current, ...(patch && typeof patch === "object" ? patch : {}) }
-  const normalized = normalizeConfig(merged)
-  const file = path.join(cacheDir(), "config.json")
-  const tmp = file + ".tmp"
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(tmp, JSON.stringify(normalized))
-    fs.renameSync(tmp, file)
-  } catch {
-    try {
-      fs.unlinkSync(tmp)
-    } catch {
-      /* best effort */
-    }
-  }
-}
-
-function readPosition(): { x: number; y: number } {
-  const file = path.join(cacheDir(), "pos.json")
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, "utf8"))
-    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-      const x = (raw as Record<string, unknown>).x
-      const y = (raw as Record<string, unknown>).y
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        return { x: Math.round(x as number), y: Math.round(y as number) }
-      }
-    }
-  } catch {
-    /* no position yet */
-  }
-  return { x: 0, y: 0 }
-}
-
-function startPet(): boolean {
-  const result = launchPet({ appDir: resolveAppDir([readTextFile(appDirFile())]) })
-  return Boolean(result && result.launched)
-}
-
-function stopPet(): boolean {
-  return closePetProcess({ pidFile: pidFile(), heartbeatFile: heartbeatFile() })
-}
-
-function petRunning(): boolean {
-  return petAlreadyRunning({ pidFile: pidFile() })
-}
-
-function readPetPid(pidFileArg: string): number {
-  try {
-    const pid = parseInt(fs.readFileSync(pidFileArg, "utf8").trim(), 10)
-    return Number.isInteger(pid) && pid > 0 ? pid : 0
-  } catch {
-    return 0
-  }
-}
-
-function isAlive(pid: number): boolean {
-  if (!pid) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err) {
-    return (err as { code?: string }).code !== "ESRCH"
-  }
-}
-
-function closePetProcess(options: { pidFile?: string; heartbeatFile?: string } = {}): boolean {
-  const pidFileArg = options.pidFile || pidFile()
-  const heartbeatFileArg = options.heartbeatFile || heartbeatFile()
-  try {
-    fs.unlinkSync(heartbeatFileArg)
-  } catch {
-    /* heartbeat already gone */
-  }
-  const pid = readPetPid(pidFileArg)
-  if (!pid || !isAlive(pid)) return false
-  try {
-    process.kill(pid)
-  } catch {
-    /* already exited */
-  }
-  try {
-    fs.unlinkSync(pidFileArg)
-  } catch {
-    /* best effort */
-  }
-  return true
-}
-
-function resolveElectronBin(dir: string, platform: string = process.platform): string | undefined {
-  const isWin = platform === "win32"
-  const dist = path.join(dir, "node_modules", "electron", "dist", isWin ? "electron.exe" : "electron")
-  if (fs.existsSync(dist)) return dist
-  const shim = path.join(dir, "node_modules", ".bin", isWin ? "electron.cmd" : "electron")
-  if (fs.existsSync(shim)) return shim
-  return undefined
-}
-
-function hasElectron(dir: string): boolean {
-  return resolveElectronBin(dir) !== undefined
-}
-
-function resolveAppDir(extraCandidates: string[] = []): string {
-  const candidates = [
-    process.env.OPENCODE_PET_DIR,
-    ...extraCandidates,
-    path.join(safeHome(), "opencode-pet"),
-    path.join(safeHome(), "opencode-scrybe"),
-  ].filter(Boolean) as string[]
-  for (const dir of candidates) {
-    if (isUsableAppDir(dir) && hasElectron(dir)) return dir
-  }
-  return candidates[0] || path.join(safeHome(), "opencode-pet")
-}
-
-function petAlreadyRunning(options: { pidFile?: string } = {}): boolean {
-  const pidFileArg = options.pidFile || pidFile()
-  const pid = readPetPid(pidFileArg)
-  return Boolean(pid && isAlive(pid))
-}
-
-const DEFAULT_LOCK_HOLD_MS = 1500
-
-function acquireLaunchLock(dir: string, staleMs: number = 5000): string | null {
-  if (!dir) return null
-  const file = path.join(dir, "launch.lock")
-  const claim = () => {
-    const fd = fs.openSync(file, "wx")
-    fs.writeSync(fd, String(process.pid))
-    fs.closeSync(fd)
-    return file
-  }
-  try {
-    fs.mkdirSync(dir, { recursive: true })
-    return claim()
-  } catch {
-    try {
-      const age = Date.now() - fs.statSync(file).mtimeMs
-      if (age > staleMs) {
-        fs.unlinkSync(file)
-        return claim()
-      }
-    } catch {
-      /* raced */
-    }
-    return null
-  }
-}
-
-function launchPet(options: { appDir?: string; pidFile?: string; skipLock?: boolean; skipRunningCheck?: boolean; platform?: string } = {}): { launched: boolean; reason?: string; appDir?: string } {
-  const appDir = options.appDir || resolveAppDir([])
-  const noLaunch = process.env.OPENCODE_PET_NO_LAUNCH === "1"
-  if (noLaunch) return { launched: false, reason: "no-launch" }
-  const bin = resolveElectronBin(appDir, options.platform || process.platform)
-  if (!bin) return { launched: false, reason: "no-electron" }
-  if (options.skipRunningCheck !== true && petAlreadyRunning({ pidFile: options.pidFile })) {
-    return { launched: false, reason: "already-running" }
-  }
-  if (options.skipLock !== true) {
-    const lock = acquireLaunchLock(path.join(safeHome(), ".cache", "opencode-pet"), 5000)
-    if (!lock) return { launched: false, reason: "launch-locked" }
-    setTimeout(() => {
-      try {
-        fs.unlinkSync(lock)
-      } catch {
-        /* already released */
-      }
-    }, DEFAULT_LOCK_HOLD_MS).unref?.()
-  }
-  const childEnv = safeEnv({})
-  const spawnOptions = {
-    cwd: appDir,
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-    shell: false,
-    env: childEnv,
-  }
-  const isWin = (options.platform || process.platform) === "win32"
-  try {
-    const { spawn } = require("node:child_process")
-    let child
-    if (isWin && bin.endsWith(".cmd")) {
-      if (!isSafeCmdPath(bin)) return { launched: false, reason: "unsafe-path" }
-      const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe"
-      child = spawn(comspec, ["/d", "/s", "/c", bin, "."], spawnOptions)
-    } else {
-      child = spawn(bin, ["."], spawnOptions)
-    }
-    child.on("error", () => {})
-    child.unref()
-  } catch {
-    return { launched: false, reason: "spawn-failed" }
-  }
-  return { launched: true, appDir }
-}
-
-function parsePetCommand(input: unknown): { action: string; raw: string } {
-  const raw = String(input === undefined || input === null ? "" : input).trim().toLowerCase()
-  if (!raw) return { action: "toggle", raw }
-  if (raw === "on" || raw === "enable" || raw === "show") return { action: "on", raw }
-  if (raw === "off" || raw === "disable" || raw === "hide") return { action: "off", raw }
-  if (raw === "toggle") return { action: "toggle", raw }
-  if (raw === "restart" || raw === "reload") return { action: "restart", raw }
-  if (raw === "status" || raw === "state") return { action: "status", raw }
-  return { action: "toggle", raw }
-}
-
-function shortcutAction(running: boolean): "start" | "stop" {
-  return running ? "stop" : "start"
-}
-
-function resolveCommand(action: string, state: { running?: boolean; visible?: boolean }): { start: boolean; show: boolean; stop: boolean } {
-  const running = Boolean(state && state.running)
-  const visible = Boolean(state && state.visible)
-  switch (action) {
-    case "on":
-      return { start: !running, show: true, stop: false }
-    case "off":
-      return { start: false, show: false, stop: false }
-    case "toggle":
-      return { start: !running, show: running ? !visible : true, stop: false }
-    case "restart":
-      return { start: true, show: true, stop: running }
-    case "status":
-      return { start: false, show: false, stop: false }
-    default:
-      return { start: false, show: visible, stop: false }
-  }
-}
-
-// (inlined helpers above)
+// The process, config, and shortcut rules live in ./runtime, a side-effect-free
+// mirror of this repo's shared/ modules that test/runtime.test.ts keeps in
+// parity. This file only wires them to the plugin SDK.
 
 const PET_STATES = [
   "idle",
@@ -377,11 +37,11 @@ const PET_STATES = [
 
 type PetState = (typeof PET_STATES)[number]
 
-const KNOWN_PACKS = [
+// Pets the overlay can actually draw. Sprite-sheet packs are registered in
+// app/renderer/packs.js; none ship yet, so Scrybe is the only choice.
+const KNOWN_PACKS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "scrybe", label: "Scrybe (built in)" },
-  { id: "clack", label: "Clack" },
-  { id: "shane-hollander", label: "Shane Hollander" },
-] as const
+]
 
 const PetStatusSchema = Schema.Struct({
   available: Schema.Boolean,
@@ -425,29 +85,34 @@ const PetControl = Ipc.define({
 // Paths are resolved lazily. The desktop app also evaluates this bundle in
 // the window process, where node:os and node:path are inert stubs. Calling
 // them at module scope would make the whole settings page disappear.
-function cacheDir() {
-  return path.join(os.homedir(), ".cache", "opencode-pet")
+function cacheFile(name: string) {
+  return path.join(cacheDir(), name)
 }
-function stateFile() {
-  return path.join(cacheDir(), "state.json")
+const stateFile = () => cacheFile("state.json")
+const pidFile = () => cacheFile("pet.pid")
+const heartbeatFile = () => cacheFile("heartbeat")
+const hiddenFile = () => cacheFile("hidden")
+const appDirFile = () => cacheFile("app.dir")
+const packsDir = () => cacheFile("packs")
+const configDir = () => ({ dir: cacheDir() })
+
+// Electron and child_process are loaded only when a main-process function
+// runs, never at module scope, for the same reason.
+function electron(): any {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require("electron")
+  } catch {
+    return null
+  }
 }
-function posFile() {
-  return path.join(cacheDir(), "pos.json")
-}
-function pidFile() {
-  return path.join(cacheDir(), "pet.pid")
-}
-function heartbeatFile() {
-  return path.join(cacheDir(), "heartbeat")
-}
-function hiddenFile() {
-  return path.join(cacheDir(), "hidden")
-}
-function appDirFile() {
-  return path.join(cacheDir(), "app.dir")
-}
-function packsDir() {
-  return path.join(cacheDir(), "packs")
+
+function spawnFn(): SpawnFn | undefined {
+  try {
+    return require("node:child_process").spawn as SpawnFn
+  } catch {
+    return undefined
+  }
 }
 
 function readJson(file: string): unknown {
@@ -469,8 +134,34 @@ function writeJson(file: string, value: unknown) {
   }
 }
 
-// The Electron app and this page must agree on defaults, ranges, and file
-// layout. The helpers above are the inlined copies.
+function readTextFile(file: string): string {
+  try {
+    return fs.readFileSync(file, "utf8").trim()
+  } catch {
+    return ""
+  }
+}
+
+function startPet(): boolean {
+  // The server plugin records the checkout it resolved; prefer it.
+  const recorded = readTextFile(appDirFile())
+  const result = launchPet({
+    appDir: resolveAppDir(recorded ? [recorded] : []),
+    pidFile: pidFile(),
+    lockDir: cacheDir(),
+    spawn: spawnFn(),
+  })
+  return result.launched
+}
+
+function stopPet(): boolean {
+  return closePetProcess({ pidFile: pidFile(), heartbeatFile: heartbeatFile() })
+}
+
+function petRunning(): boolean {
+  return petAlreadyRunning({ pidFile: pidFile() })
+}
+
 function readRuntimeState(): { available: boolean; state: PetState; ts: number; detail?: string } {
   const fallback = { available: false, state: "idle" as PetState, ts: 0 }
   const raw = readJson(stateFile())
@@ -483,47 +174,47 @@ function readRuntimeState(): { available: boolean; state: PetState; ts: number; 
   return { available: true, state: state as PetState, ts, detail }
 }
 
-function readTextFile(file: string): string {
-  try {
-    return fs.readFileSync(file, "utf8").trim()
-  } catch {
-    return ""
-  }
-}
-
 function refreshStatus(current: { available: boolean; state: PetState; ts: number; detail?: string }) {
-  const cfg = readConfig()
-  const pos = readPosition()
+  const cfg = readConfig(configDir())
+  const pos = readPosition(configDir()) || { x: 0, y: 0 }
   return {
     available: current.available,
     running: petRunning(),
-    enabled: cfg.enabled !== false,
-    visible: cfg.visible !== false,
-    autoLaunch: cfg.autoLaunch !== false,
+    enabled: cfg.enabled,
+    visible: cfg.visible,
+    autoLaunch: cfg.autoLaunch,
     state: current.state,
     ts: current.ts,
     detail: current.detail,
-    scale: typeof cfg.scale === "number" ? cfg.scale : 1.0,
-    animationSpeed: typeof cfg.animationSpeed === "number" ? cfg.animationSpeed : 1.0,
-    muted: cfg.muted === true,
-    feed: cfg.feed === true,
-    autoHideFullscreen: cfg.autoHideFullscreen === true,
-    pet: typeof cfg.pet === "string" && cfg.pet ? cfg.pet : "scrybe",
+    scale: cfg.scale,
+    animationSpeed: cfg.animationSpeed,
+    muted: cfg.muted,
+    feed: cfg.feed,
+    autoHideFullscreen: cfg.autoHideFullscreen,
+    // An older config may name a pack that no longer ships; the overlay draws
+    // Scrybe for it, so report that.
+    pet: KNOWN_PACKS.some((pack) => pack.id === cfg.pet) ? cfg.pet : "scrybe",
     positionX: pos.x,
     positionY: pos.y,
   }
 }
 
-// The OpenCode desktop app is Electron, so the plugin main process can reach
-// its BrowserWindow list. This is best effort: a different host may not expose
-// Electron, and then auto-hide simply stays off.
-function electronBrowserWindow(): any {
+// Is any OpenCode window fullscreen? The plugin main process lives inside the
+// desktop app (Electron), so it can see the app's own windows. A different
+// host may not expose Electron, and then auto-hide simply stays off.
+function openCodeIsFullscreen(): boolean {
+  const BrowserWindow = electron()?.BrowserWindow
+  if (!BrowserWindow) return false
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const electron = require("electron")
-    return electron && electron.BrowserWindow ? electron.BrowserWindow : null
+    return BrowserWindow.getAllWindows().some((win: any) => {
+      try {
+        return Boolean(win && win.isFullScreen && win.isFullScreen())
+      } catch {
+        return false
+      }
+    })
   } catch {
-    return null
+    return false
   }
 }
 
@@ -534,12 +225,24 @@ const definition = Plugin.define({
     let status = refreshStatus(runtime)
     let disposed = false
     let restartTimer: ReturnType<typeof setTimeout> | undefined
-    let shortcutRegistered = false
+
+    // Only notify the window, and only rewrite the `hidden` flag, when the
+    // value actually changed. Both run on timers for as long as Desktop is open.
+    const statusChanged = createChangeGate()
+    statusChanged(status)
+    const hiddenChanged = createChangeGate()
+    const writeHidden = (hidden: boolean) => {
+      // The overlay deletes a stale flag when it starts, so rewrite a missing
+      // "true" even if this process already wrote it once.
+      if (hiddenChanged(hidden) || (hidden && !fs.existsSync(hiddenFile()))) {
+        writeJson(hiddenFile(), hidden)
+      }
+    }
 
     const publish = () => {
       runtime = readRuntimeState()
       status = refreshStatus(runtime)
-      provider.changed()
+      if (statusChanged(status)) provider.changed()
     }
 
     // A stop followed immediately by a start can see the old pid still alive,
@@ -559,7 +262,7 @@ const definition = Plugin.define({
     const provider = ctx.provide(PetControl, {
       state: () => status,
       setEnabled: (value: boolean) => {
-        updateConfig(value ? { enabled: true, visible: true } : { enabled: false })
+        updateConfig(value ? { enabled: true, visible: true } : { enabled: false }, configDir())
         if (value) startPet()
         else stopPet()
         publish()
@@ -567,11 +270,11 @@ const definition = Plugin.define({
       setVisible: (value: boolean) => {
         // Visibility only. Hiding must not kill the process, so `/pet off`
         // and this checkbox can be undone without a relaunch.
-        updateConfig({ visible: Boolean(value) })
+        updateConfig({ visible: Boolean(value) }, configDir())
         publish()
       },
       setAutoLaunch: (value: boolean) => {
-        updateConfig({ autoLaunch: Boolean(value) })
+        updateConfig({ autoLaunch: Boolean(value) }, configDir())
         publish()
       },
       restart: () => {
@@ -580,38 +283,39 @@ const definition = Plugin.define({
         publish()
       },
       setScale: (scale: number) => {
-        // shared/pet-config clamps to the supported range on write.
-        updateConfig({ scale })
+        // The shared normalizer clamps to the supported range on write.
+        updateConfig({ scale }, configDir())
         publish()
       },
       setAnimationSpeed: (speed: number) => {
-        updateConfig({ animationSpeed: speed })
+        updateConfig({ animationSpeed: speed }, configDir())
         publish()
       },
       setMuted: (muted: boolean) => {
-        updateConfig({ muted: Boolean(muted) })
+        updateConfig({ muted: Boolean(muted) }, configDir())
         publish()
       },
       setFeed: (feed: boolean) => {
-        updateConfig({ feed: Boolean(feed) })
+        updateConfig({ feed: Boolean(feed) }, configDir())
         publish()
       },
       setAutoHideFullscreen: (value: boolean) => {
-        updateConfig({ autoHideFullscreen: Boolean(value) })
-        writeJson(hiddenFile(), false)
+        updateConfig({ autoHideFullscreen: Boolean(value) }, configDir())
+        if (!value) writeHidden(false)
         publish()
       },
       setPet: (pet: string) => {
-        if (pet && pet.trim()) updateConfig({ pet: pet.trim() })
+        const id = typeof pet === "string" ? pet.trim() : ""
+        if (KNOWN_PACKS.some((pack) => pack.id === id)) updateConfig({ pet: id }, configDir())
         publish()
       },
       setPosition: (pos: { x: number; y: number }) => {
-        writeJson(posFile(), { x: Math.round(pos.x), y: Math.round(pos.y) })
+        writePosition(pos, configDir())
         publish()
       },
       resetPosition: () => {
         try {
-          fs.unlinkSync(posFile())
+          fs.unlinkSync(cacheFile("pos.json"))
         } catch {
           // Already gone.
         }
@@ -622,65 +326,49 @@ const definition = Plugin.define({
       openPacksFolder: () => {
         try {
           fs.mkdirSync(packsDir(), { recursive: true })
-          const electron = require("electron")
-          if (electron && electron.shell && electron.shell.openPath) {
-            void electron.shell.openPath(packsDir())
-          }
+          const shell = electron()?.shell
+          if (shell && shell.openPath) void shell.openPath(packsDir())
         } catch {
           // The folder still exists even if the shell cannot open it.
         }
       },
     })
 
-    // Ctrl+Alt+Shift+P is a process switch, not a visibility switch: press it
-    // while the pet is stopped and it starts, press it while it runs and it
-    // stops. The shortcut lives here because the Electron overlay cannot start
-    // itself once it has exited.
-    try {
-      const electron = require("electron")
-      if (electron && electron.globalShortcut) {
-        shortcutRegistered = electron.globalShortcut.register("Control+Alt+Shift+P", () => {
-          if (disposed) return
-          const action = shortcutAction(petRunning())
-          if (action === "stop") {
-            stopPet()
-          } else {
-            updateConfig({ visible: true })
-            startPet()
-          }
-          publish()
-        })
-        if (!shortcutRegistered) {
-          console.error("[hello-pet] Ctrl+Alt+Shift+P is already taken by another app")
+    // Ctrl+Alt+Shift+P here is a process switch: it starts a stopped pet and
+    // stops a running one. The overlay binds the same key to quit while it
+    // runs; shortcut.owner keeps the two from both holding it, and tick()
+    // takes the key over once the overlay lets go.
+    const shortcut = createShortcutController({
+      globalShortcut: () => {
+        const api = electron()?.globalShortcut
+        return api && typeof api.register === "function" ? (api as GlobalShortcutApi) : null
+      },
+      dir: cacheDir,
+      onPress: () => {
+        if (disposed) return
+        if (shortcutAction(petRunning()) === "stop") {
+          stopPet()
+        } else {
+          updateConfig({ visible: true }, configDir())
+          startPet()
         }
-      }
-    } catch {
-      // A host without globalShortcut still has the settings page and /pet.
+        publish()
+      },
+    })
+    if (!shortcut.tick()) {
+      console.info("[hello-pet] Ctrl+Alt+Shift+P is held elsewhere (usually the running pet); will retry")
     }
 
     const statusTimer = setInterval(() => {
-      if (!disposed) publish()
+      if (disposed) return
+      shortcut.tick()
+      publish()
     }, 2000)
 
     const fullscreenTimer = setInterval(() => {
       if (disposed) return
-      const cfg = readConfig()
-      const BrowserWindow = electronBrowserWindow()
-      let fullscreen = false
-      if (cfg.autoHideFullscreen === true && BrowserWindow) {
-        try {
-          fullscreen = BrowserWindow.getAllWindows().some((win: any) => {
-            try {
-              return Boolean(win && win.isFullScreen && win.isFullScreen())
-            } catch {
-              return false
-            }
-          })
-        } catch {
-          fullscreen = false
-        }
-      }
-      writeJson(hiddenFile(), fullscreen ? true : false)
+      // `status` is refreshed every 2s, so no extra config read here.
+      writeHidden(status.autoHideFullscreen && openCodeIsFullscreen())
     }, 1000)
 
     return () => {
@@ -688,13 +376,7 @@ const definition = Plugin.define({
       clearInterval(statusTimer)
       clearInterval(fullscreenTimer)
       if (restartTimer) clearTimeout(restartTimer)
-      if (shortcutRegistered) {
-        try {
-          require("electron").globalShortcut.unregister("Control+Alt+Shift+P")
-        } catch {
-          // Already gone, or the host has no globalShortcut.
-        }
-      }
+      shortcut.dispose()
       writeJson(hiddenFile(), false)
       provider.dispose()
     }
@@ -749,7 +431,7 @@ const definition = Plugin.define({
             id: "pet-active",
             title: ctx.t("settings.active.title"),
             description: ctx.t("settings.active.description"),
-            keywords: "pack pet active choose clack shane scrybe",
+            keywords: "pack pet active choose scrybe",
           },
           {
             id: "pet-appearance",
@@ -857,14 +539,18 @@ const definition = Plugin.define({
             </h3>
             <label style={{ display: "flex", "flex-direction": "column", gap: "4px", "font-size": "13px" }}>
               <span>{ctx.t("settings.active.title")}</span>
-              <select
-                value={status()?.pet ?? "scrybe"}
-                onChange={(event) => void runControl(() => control.setPet(event.currentTarget.value))}
-              >
-                {KNOWN_PACKS.map((pack) => (
-                  <option value={pack.id}>{pack.label}</option>
-                ))}
-              </select>
+              {KNOWN_PACKS.length > 1 ? (
+                <select
+                  value={status()?.pet ?? "scrybe"}
+                  onChange={(event) => void runControl(() => control.setPet(event.currentTarget.value))}
+                >
+                  {KNOWN_PACKS.map((pack) => (
+                    <option value={pack.id}>{pack.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <span style={{ opacity: 0.8 }}>{KNOWN_PACKS[0].label}</span>
+              )}
             </label>
             <label style={{ display: "flex", "flex-direction": "column", gap: "4px", "font-size": "13px" }}>
               <span>
@@ -917,7 +603,7 @@ const definition = Plugin.define({
             <label style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "13px" }}>
               <input
                 type="checkbox"
-                checked={status()?.feed ?? false}
+                checked={status()?.feed ?? true}
                 onChange={(event) =>
                   void runControl(() => control.setFeed(event.currentTarget.checked))
                 }
@@ -970,7 +656,7 @@ const definition = Plugin.define({
       slash: { name: "pet", arguments: true },
       run: async (input) => {
         const { action } = parsePetCommand(input)
-const current = status()
+        const current = status()
 
         if (action === "status") {
           const running = current?.running

@@ -4,8 +4,8 @@ const web = require("solid-js/web");
 const effect = require("effect");
 const gui = require("@opencode/plugin/gui");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
+const os = require("node:os");
 function _interopNamespaceDefault(e) {
   const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
   if (e) {
@@ -23,8 +23,8 @@ function _interopNamespaceDefault(e) {
   return Object.freeze(n);
 }
 const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
-const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
 const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
+const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
 const en = {
   "settings.title": "Pet (Experimental)",
   "settings.note": "This page controls the real floating desktop companion. The companion runs as its own window and stays visible when OpenCode is minimized.",
@@ -53,13 +53,13 @@ const en = {
   "settings.behaviour.description": "Sound effects, activity feed, fullscreen hiding, and position.",
   "settings.packs.title": "Manage and Import Pets",
   "settings.packs.description": "Open the packs folder and review the available pets.",
-  "settings.packs.note": "Custom pack import is not wired into the pet renderer yet. The built-in Scrybe, Clack, and Shane Hollander packs are safe to switch between.",
+  "settings.packs.note": "Only the built-in Scrybe pet is available for now. Custom pack import is not wired into the pet renderer yet.",
   "settings.packs.openFolder": "Open packs folder",
   "settings.scale": "Scale",
   "settings.animationSpeed": "Animation Speed",
   "settings.sound": "Sound Effects",
   "settings.feed": "Activity Feed",
-  "settings.autoHide": "Auto Hide in Fullscreen",
+  "settings.autoHide": "Auto Hide when OpenCode is fullscreen",
   "settings.restart": "Restart Pet",
   "settings.resetPosition": "Reset Position",
   "command.title": "Pet: toggle",
@@ -71,11 +71,6 @@ const en = {
   "command.status.hidden": "hidden",
   "command.status.offline": "no state yet"
 };
-var _tmpl$ = /* @__PURE__ */ web.template(`<div style="display:flex;flex-direction:column;gap:18px;padding:4px 0"><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><div style="display:grid;grid-template-columns:140px 1fr;gap:6px;font-size:13px"><span style=opacity:0.65></span><span></span><span style=opacity:0.65></span><span></span><span style=opacity:0.65></span><span>, </span></div><div style=display:flex;gap:8px;flex-wrap:wrap><button type=button></button><button type=button></button></div></section><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><label style=display:flex;align-items:flex-start;gap:10px;cursor:pointer><input type=checkbox style=margin-top:2px><span style=display:flex;flex-direction:column;gap:2px><span style=font-weight:600></span><span style=opacity:0.7;font-size:12px></span></span></label><label style=display:flex;align-items:flex-start;gap:10px;cursor:pointer><input type=checkbox style=margin-top:2px><span style=display:flex;flex-direction:column;gap:2px><span style=font-weight:600></span><span style=opacity:0.7;font-size:12px></span></span></label><label style=display:flex;align-items:flex-start;gap:10px;cursor:pointer><input type=checkbox style=margin-top:2px><span style=display:flex;flex-direction:column;gap:2px><span style=font-weight:600></span><span style=opacity:0.7;font-size:12px></span></span></label></section><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><label style=display:flex;flex-direction:column;gap:4px;font-size:13px><span></span><select></select></label><label style=display:flex;flex-direction:column;gap:4px;font-size:13px><span>: </span><input type=range min=0.5 max=2 step=0.05></label><label style=display:flex;flex-direction:column;gap:4px;font-size:13px><span>: </span><input type=range min=0.5 max=2 step=0.05></label></section><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><label style=display:flex;align-items:center;gap:8px;font-size:13px><input type=checkbox></label><label style=display:flex;align-items:center;gap:8px;font-size:13px><input type=checkbox></label><label style=display:flex;align-items:center;gap:8px;font-size:13px><input type=checkbox></label></section><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><p style=margin:0;opacity:0.7;font-size:12px></p><div style=display:flex;gap:8px;flex-wrap:wrap><button type=button></button></div></section><p style=margin:0;opacity:0.6;font-size:12px>`), _tmpl$2 = /* @__PURE__ */ web.template(`<option>`);
-const UNSAFE_CMD_CHARS = /[&|<>^%!"\r\n\0]/;
-function isSafeCmdPath(value) {
-  return typeof value === "string" && value.length > 0 && !UNSAFE_CMD_CHARS.test(value);
-}
 function safeHome() {
   try {
     if (typeof os__namespace.homedir === "function") {
@@ -85,6 +80,26 @@ function safeHome() {
   } catch {
   }
   return process.env.HOME || process.env.USERPROFILE || "";
+}
+function cacheDir() {
+  return path__namespace.join(safeHome(), ".cache", "opencode-pet");
+}
+function resolveReal(target) {
+  const absolute = path__namespace.resolve(String(target));
+  try {
+    return fs__namespace.realpathSync.native(absolute);
+  } catch {
+    return absolute;
+  }
+}
+function isPathInside(parent, child) {
+  if (typeof parent !== "string" || typeof child !== "string") return false;
+  if (!parent || !child) return false;
+  const base = resolveReal(parent);
+  const target = resolveReal(child);
+  const relative = path__namespace.relative(base, target);
+  if (relative === "") return true;
+  return !relative.startsWith("..") && !path__namespace.isAbsolute(relative);
 }
 function isUsableAppDir(dir) {
   if (typeof dir !== "string" || !dir) return false;
@@ -96,7 +111,65 @@ function isUsableAppDir(dir) {
     return false;
   }
 }
-const ALLOWED_EXACT = /* @__PURE__ */ new Set(["PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "SystemDrive", "windir", "WINDIR", "COMSPEC", "ComSpec", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "USERNAME", "USER", "LOGNAME", "SHELL", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "NUMBER_OF_PROCESSORS", "OS", "PROCESSOR_ARCHITECTURE"]);
+const ALLOWED_EXACT = /* @__PURE__ */ new Set([
+  "PATH",
+  "Path",
+  "PATHEXT",
+  "SystemRoot",
+  "SYSTEMROOT",
+  "SystemDrive",
+  "windir",
+  "WINDIR",
+  "COMSPEC",
+  "ComSpec",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "PROGRAMDATA",
+  "PROGRAMFILES",
+  "PROGRAMFILES(X86)",
+  "PROGRAMW6432",
+  "USERNAME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "XDG_RUNTIME_DIR",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
+  "XAUTHORITY",
+  "XDG_SESSION_TYPE",
+  "XDG_CURRENT_DESKTOP",
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "NUMBER_OF_PROCESSORS",
+  "OS",
+  "PROCESSOR_ARCHITECTURE",
+  "ELECTRON_MIRROR",
+  "ELECTRON_CUSTOM_DIR",
+  "ELECTRON_CUSTOM_FILENAME",
+  "ELECTRON_GET_USE_PROXY",
+  "GLOBAL_AGENT_HTTP_PROXY",
+  "GLOBAL_AGENT_HTTPS_PROXY",
+  "GLOBAL_AGENT_NO_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy"
+]);
 const ALLOWED_PREFIXES = ["OPENCODE_PET_"];
 const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 function isAllowedKey(key) {
@@ -122,123 +195,112 @@ function safeEnv(extra = {}, source = process.env) {
   }
   return env;
 }
+const DEFAULT_CONFIG = {
+  version: 2,
+  enabled: true,
+  autoLaunch: true,
+  pet: "scrybe",
+  scale: 1,
+  animationSpeed: 1,
+  muted: false,
+  autoHideFullscreen: false,
+  feed: true,
+  visible: true
+};
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 2;
+const MIN_SPEED = 0.5;
+const MAX_SPEED = 2;
 function clampNumber(value, min, max, fallback) {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   if (value < min) return min;
   if (value > max) return max;
   return value;
 }
-const MIN_SCALE = 0.5;
-const MAX_SCALE = 2;
-const MIN_SPEED = 0.5;
-const MAX_SPEED = 2;
 function normalizeConfig(raw) {
   const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const config = {
-    version: 2,
-    enabled: true,
-    autoLaunch: true,
-    pet: "scrybe",
-    scale: 1,
-    animationSpeed: 1,
-    muted: false,
-    autoHideFullscreen: false,
-    feed: false,
-    visible: true
-  };
+  const config = { ...DEFAULT_CONFIG };
   if (typeof source.version === "number" && Number.isFinite(source.version)) {
     config.version = Math.max(1, Math.round(source.version));
   }
   if (typeof source.enabled === "boolean") config.enabled = source.enabled;
   if (typeof source.autoLaunch === "boolean") config.autoLaunch = source.autoLaunch;
   if (typeof source.pet === "string" && source.pet.trim()) config.pet = source.pet.trim();
-  config.scale = clampNumber(source.scale, MIN_SCALE, MAX_SCALE, 1);
-  config.animationSpeed = clampNumber(source.animationSpeed, MIN_SPEED, MAX_SPEED, 1);
+  config.scale = clampNumber(source.scale, MIN_SCALE, MAX_SCALE, DEFAULT_CONFIG.scale);
+  config.animationSpeed = clampNumber(
+    source.animationSpeed,
+    MIN_SPEED,
+    MAX_SPEED,
+    DEFAULT_CONFIG.animationSpeed
+  );
   if (typeof source.muted === "boolean") config.muted = source.muted;
-  if (typeof source.autoHideFullscreen === "boolean") config.autoHideFullscreen = source.autoHideFullscreen;
+  if (typeof source.autoHideFullscreen === "boolean") {
+    config.autoHideFullscreen = source.autoHideFullscreen;
+  }
   if (typeof source.feed === "boolean") config.feed = source.feed;
   if (typeof source.visible === "boolean") config.visible = source.visible;
   return config;
 }
-function readConfig() {
-  const file = path__namespace.join(cacheDir(), "config.json");
-  try {
-    const raw = JSON.parse(fs__namespace.readFileSync(file, "utf8"));
-    return normalizeConfig(raw);
-  } catch {
-    return normalizeConfig(null);
-  }
+function normalizePosition(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const { x, y } = raw;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x: Math.round(x), y: Math.round(y) };
 }
-function updateConfig(patch) {
-  const current = readConfig();
-  const merged = {
-    ...current,
-    ...patch && typeof patch === "object" ? patch : {}
-  };
-  const normalized = normalizeConfig(merged);
-  const file = path__namespace.join(cacheDir(), "config.json");
-  const tmp = file + ".tmp";
+function requireDir(options) {
+  const dir = options && options.dir || null;
+  if (!dir) throw new Error("pet-config: a directory is required");
+  return dir;
+}
+function writeAtomic(dir, name, value) {
+  const file = path__namespace.join(dir, name);
+  const tmp = path__namespace.join(dir, name + ".tmp");
   try {
-    fs__namespace.mkdirSync(path__namespace.dirname(file), {
-      recursive: true
-    });
-    fs__namespace.writeFileSync(tmp, JSON.stringify(normalized));
+    fs__namespace.mkdirSync(dir, { recursive: true });
+    fs__namespace.writeFileSync(tmp, JSON.stringify(value));
     fs__namespace.renameSync(tmp, file);
+    return true;
   } catch {
     try {
       fs__namespace.unlinkSync(tmp);
     } catch {
     }
+    return false;
   }
 }
-function readPosition() {
-  const file = path__namespace.join(cacheDir(), "pos.json");
+function readConfig(options) {
+  const file = path__namespace.join(requireDir(options), "config.json");
   try {
-    const raw = JSON.parse(fs__namespace.readFileSync(file, "utf8"));
-    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-      const x = raw.x;
-      const y = raw.y;
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        return {
-          x: Math.round(x),
-          y: Math.round(y)
-        };
-      }
-    }
+    return normalizeConfig(JSON.parse(fs__namespace.readFileSync(file, "utf8")));
   } catch {
+    return { ...DEFAULT_CONFIG };
   }
-  return {
-    x: 0,
-    y: 0
-  };
 }
-function startPet() {
-  const result = launchPet({
-    appDir: resolveAppDir([readTextFile(appDirFile())])
-  });
-  return Boolean(result && result.launched);
+function writeConfig(config, options) {
+  const normalized = normalizeConfig(config);
+  return writeAtomic(requireDir(options), "config.json", normalized) ? normalized : normalizeConfig({});
 }
-function stopPet() {
-  return closePetProcess({
-    pidFile: pidFile(),
-    heartbeatFile: heartbeatFile()
-  });
+function updateConfig(patch, options) {
+  const current = readConfig(options);
+  const merged = { ...current, ...patch && typeof patch === "object" ? patch : {} };
+  return writeConfig(merged, options);
 }
-function petRunning() {
-  return petAlreadyRunning({
-    pidFile: pidFile()
-  });
-}
-function readPetPid(pidFileArg) {
+function readPosition(options) {
+  const file = path__namespace.join(requireDir(options), "pos.json");
   try {
-    const pid = parseInt(fs__namespace.readFileSync(pidFileArg, "utf8").trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : 0;
+    return normalizePosition(JSON.parse(fs__namespace.readFileSync(file, "utf8")));
   } catch {
-    return 0;
+    return null;
   }
 }
-function isAlive(pid) {
-  if (!pid) return false;
+function writePosition(position, options) {
+  const dir = requireDir(options);
+  const normalized = normalizePosition(position);
+  if (!normalized) return null;
+  return writeAtomic(dir, "pos.json", normalized) ? normalized : null;
+}
+function isProcessAlive(pid) {
+  if (!pid || !Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -246,52 +308,74 @@ function isAlive(pid) {
     return err.code !== "ESRCH";
   }
 }
-function closePetProcess(options = {}) {
-  const pidFileArg = options.pidFile || pidFile();
-  const heartbeatFileArg = options.heartbeatFile || heartbeatFile();
+function readPetPid(pidFile2 = path__namespace.join(cacheDir(), "pet.pid")) {
   try {
-    fs__namespace.unlinkSync(heartbeatFileArg);
+    const pid = parseInt(fs__namespace.readFileSync(pidFile2, "utf8").trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : 0;
+  } catch {
+    return 0;
+  }
+}
+function closePetProcess(options = {}) {
+  const pidFile2 = options.pidFile || path__namespace.join(cacheDir(), "pet.pid");
+  const heartbeatFile2 = options.heartbeatFile || path__namespace.join(cacheDir(), "heartbeat");
+  const isAlive = options.isAlive || isProcessAlive;
+  const kill = options.kill || ((pid2) => process.kill(pid2));
+  try {
+    fs__namespace.unlinkSync(heartbeatFile2);
   } catch {
   }
-  const pid = readPetPid(pidFileArg);
+  const pid = readPetPid(pidFile2);
   if (!pid || !isAlive(pid)) return false;
   try {
-    process.kill(pid);
+    kill(pid);
   } catch {
   }
   try {
-    fs__namespace.unlinkSync(pidFileArg);
+    fs__namespace.unlinkSync(pidFile2);
   } catch {
   }
   return true;
 }
-function resolveElectronBin(dir, platform = process.platform) {
+function resolveElectronBin(appDir, platform = process.platform) {
+  if (!isUsableAppDir(appDir)) return void 0;
   const isWin = platform === "win32";
-  const dist = path__namespace.join(dir, "node_modules", "electron", "dist", isWin ? "electron.exe" : "electron");
-  if (fs__namespace.existsSync(dist)) return dist;
-  const shim = path__namespace.join(dir, "node_modules", ".bin", isWin ? "electron.cmd" : "electron");
-  if (fs__namespace.existsSync(shim)) return shim;
+  const dist = path__namespace.join(appDir, "node_modules", "electron", "dist", isWin ? "electron.exe" : "electron");
+  if (fs__namespace.existsSync(dist) && isPathInside(appDir, dist)) return { bin: dist, shell: false };
+  const shim = path__namespace.join(appDir, "node_modules", ".bin", isWin ? "electron.cmd" : "electron");
+  if (fs__namespace.existsSync(shim) && isPathInside(appDir, shim)) return { bin: shim, shell: isWin };
   return void 0;
 }
-function hasElectron(dir) {
-  return resolveElectronBin(dir) !== void 0;
+function hasElectron(appDir, platform = process.platform) {
+  return resolveElectronBin(appDir, platform) !== void 0;
 }
-function resolveAppDir(extraCandidates = []) {
-  const candidates = [process.env.OPENCODE_PET_DIR, ...extraCandidates, path__namespace.join(safeHome(), "opencode-pet"), path__namespace.join(safeHome(), "opencode-scrybe")].filter(Boolean);
+function defaultAppDirs() {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  return [
+    process.env.OPENCODE_PET_DIR,
+    path__namespace.join(home, "opencode-scrybe"),
+    path__namespace.join(home, "opencode-pet")
+  ].filter(Boolean);
+}
+function resolveAppDir(extraCandidates) {
+  const candidates = [...extraCandidates || [], ...defaultAppDirs()];
   for (const dir of candidates) {
     if (isUsableAppDir(dir) && hasElectron(dir)) return dir;
   }
-  return candidates[0] || path__namespace.join(safeHome(), "opencode-pet");
+  return candidates[0] || path__namespace.join(process.env.HOME || process.env.USERPROFILE || "", "opencode-pet");
 }
-function petAlreadyRunning(options = {}) {
-  const pidFileArg = options.pidFile || pidFile();
-  const pid = readPetPid(pidFileArg);
-  return Boolean(pid && isAlive(pid));
+const UNSAFE_CMD_CHARS = /[&|<>^%!"\r\n\0]/;
+function isSafeCmdPath(value) {
+  return typeof value === "string" && value.length > 0 && !UNSAFE_CMD_CHARS.test(value);
 }
+function cmdShimArgs(bin) {
+  return ["/d", "/s", "/c", `""${bin}" ."`];
+}
+const LAUNCH_LOCK_NAME = "launch.lock";
 const DEFAULT_LOCK_HOLD_MS = 1500;
 function acquireLaunchLock(dir, staleMs = 5e3) {
   if (!dir) return null;
-  const file = path__namespace.join(dir, "launch.lock");
+  const file = path__namespace.join(dir, LAUNCH_LOCK_NAME);
   const claim = () => {
     const fd = fs__namespace.openSync(file, "wx");
     fs__namespace.writeSync(fd, String(process.pid));
@@ -299,9 +383,7 @@ function acquireLaunchLock(dir, staleMs = 5e3) {
     return file;
   };
   try {
-    fs__namespace.mkdirSync(dir, {
-      recursive: true
-    });
+    fs__namespace.mkdirSync(dir, { recursive: true });
     return claim();
   } catch {
     try {
@@ -315,108 +397,85 @@ function acquireLaunchLock(dir, staleMs = 5e3) {
     return null;
   }
 }
+function releaseLaunchLock(file) {
+  if (!file) return;
+  try {
+    fs__namespace.unlinkSync(file);
+  } catch {
+  }
+}
+function petAlreadyRunning(options = {}) {
+  const isAlive = options.isAlive || isProcessAlive;
+  const pid = readPetPid(options.pidFile);
+  return Boolean(pid && isAlive(pid));
+}
 function launchPet(options = {}) {
-  const appDir = options.appDir || resolveAppDir([]);
-  const noLaunch = process.env.OPENCODE_PET_NO_LAUNCH === "1";
-  if (noLaunch) return {
-    launched: false,
-    reason: "no-launch"
-  };
-  const bin = resolveElectronBin(appDir, options.platform || process.platform);
-  if (!bin) return {
-    launched: false,
-    reason: "no-electron"
-  };
-  if (options.skipRunningCheck !== true && petAlreadyRunning({
-    pidFile: options.pidFile
-  })) {
-    return {
-      launched: false,
-      reason: "already-running"
-    };
+  const opts = options;
+  const appDir = opts.appDir || resolveAppDir(opts.candidates);
+  const noLaunch = opts.noLaunch || process.env.OPENCODE_PET_NO_LAUNCH === "1";
+  if (noLaunch) return { launched: false, reason: "no-launch" };
+  const resolved = resolveElectronBin(appDir, opts.platform || process.platform);
+  if (!resolved) return { launched: false, reason: "no-electron" };
+  if (opts.skipRunningCheck !== true && petAlreadyRunning(opts)) {
+    return { launched: false, reason: "already-running" };
   }
-  if (options.skipLock !== true) {
-    const lock = acquireLaunchLock(path__namespace.join(safeHome(), ".cache", "opencode-pet"), 5e3);
-    if (!lock) return {
-      launched: false,
-      reason: "launch-locked"
-    };
-    setTimeout(() => {
-      try {
-        fs__namespace.unlinkSync(lock);
-      } catch {
-      }
-    }, DEFAULT_LOCK_HOLD_MS).unref?.();
+  const lockDir = opts.lockDir || cacheDir();
+  const lock = opts.skipLock === true ? null : acquireLaunchLock(lockDir, opts.lockStaleMs);
+  if (opts.skipLock !== true && !lock) {
+    return { launched: false, reason: "launch-locked" };
   }
-  const childEnv = safeEnv({});
   const spawnOptions = {
     cwd: appDir,
     detached: true,
     stdio: "ignore",
     windowsHide: true,
     shell: false,
-    env: childEnv
+    env: safeEnv(opts.env)
   };
-  const isWin = (options.platform || process.platform) === "win32";
   try {
-    const {
-      spawn
-    } = require("node:child_process");
+    if (typeof opts.spawn !== "function") throw new Error("no spawn");
+    const run = opts.spawn;
     let child;
-    if (isWin && bin.endsWith(".cmd")) {
-      if (!isSafeCmdPath(bin)) return {
-        launched: false,
-        reason: "unsafe-path"
-      };
+    if (resolved.shell) {
+      if (!isSafeCmdPath(resolved.bin)) {
+        releaseLaunchLock(lock);
+        return { launched: false, reason: "unsafe-path" };
+      }
       const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
-      child = spawn(comspec, ["/d", "/s", "/c", bin, "."], spawnOptions);
+      child = run(comspec, cmdShimArgs(resolved.bin), {
+        ...spawnOptions,
+        windowsVerbatimArguments: true
+      });
     } else {
-      child = spawn(bin, ["."], spawnOptions);
+      child = run(resolved.bin, ["."], spawnOptions);
     }
     child.on("error", () => {
     });
     child.unref();
   } catch {
-    return {
-      launched: false,
-      reason: "spawn-failed"
-    };
+    releaseLaunchLock(lock);
+    return { launched: false, reason: "spawn-failed" };
   }
-  return {
-    launched: true,
-    appDir
-  };
+  if (lock) {
+    const holdMs = opts.lockHoldMs === void 0 ? DEFAULT_LOCK_HOLD_MS : opts.lockHoldMs;
+    if (holdMs <= 0) {
+      releaseLaunchLock(lock);
+    } else {
+      const timer = setTimeout(() => releaseLaunchLock(lock), holdMs);
+      if (typeof timer.unref === "function") timer.unref();
+    }
+  }
+  return { launched: true, appDir };
 }
 function parsePetCommand(input) {
   const raw = String(input === void 0 || input === null ? "" : input).trim().toLowerCase();
-  if (!raw) return {
-    action: "toggle",
-    raw
-  };
-  if (raw === "on" || raw === "enable" || raw === "show") return {
-    action: "on",
-    raw
-  };
-  if (raw === "off" || raw === "disable" || raw === "hide") return {
-    action: "off",
-    raw
-  };
-  if (raw === "toggle") return {
-    action: "toggle",
-    raw
-  };
-  if (raw === "restart" || raw === "reload") return {
-    action: "restart",
-    raw
-  };
-  if (raw === "status" || raw === "state") return {
-    action: "status",
-    raw
-  };
-  return {
-    action: "toggle",
-    raw
-  };
+  if (!raw) return { action: "toggle", raw };
+  if (raw === "on" || raw === "enable" || raw === "show") return { action: "on", raw };
+  if (raw === "off" || raw === "disable" || raw === "hide") return { action: "off", raw };
+  if (raw === "toggle") return { action: "toggle", raw };
+  if (raw === "restart" || raw === "reload") return { action: "restart", raw };
+  if (raw === "status" || raw === "state") return { action: "status", raw };
+  return { action: "toggle", raw };
 }
 function shortcutAction(running) {
   return running ? "stop" : "start";
@@ -426,53 +485,108 @@ function resolveCommand(action, state) {
   const visible = Boolean(state && state.visible);
   switch (action) {
     case "on":
-      return {
-        start: !running,
-        show: true,
-        stop: false
-      };
+      return { start: !running, show: true, stop: false };
     case "off":
-      return {
-        start: false,
-        show: false,
-        stop: false
-      };
+      return { start: false, show: false, stop: false };
     case "toggle":
-      return {
-        start: !running,
-        show: running ? !visible : true,
-        stop: false
-      };
+      return { start: !running, show: running ? !visible : true, stop: false };
     case "restart":
-      return {
-        start: true,
-        show: true,
-        stop: running
-      };
+      return { start: true, show: true, stop: running };
     case "status":
-      return {
-        start: false,
-        show: false,
-        stop: false
-      };
+      return { start: false, show: visible, stop: false };
     default:
-      return {
-        start: false,
-        show: visible,
-        stop: false
-      };
+      return { start: false, show: visible, stop: false };
   }
 }
+const SHORTCUT = "Control+Alt+Shift+P";
+const OWNER_FILE_NAME = "shortcut.owner";
+function readShortcutOwner(dir) {
+  try {
+    const pid = parseInt(fs__namespace.readFileSync(path__namespace.join(dir, OWNER_FILE_NAME), "utf8").trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : 0;
+  } catch {
+    return 0;
+  }
+}
+function claimShortcut(dir, options = {}) {
+  const pid = options.pid || process.pid;
+  const isAlive = options.isAlive || isProcessAlive;
+  const current = readShortcutOwner(dir);
+  if (current === pid) return true;
+  if (current && isAlive(current)) return false;
+  const file = path__namespace.join(dir, OWNER_FILE_NAME);
+  try {
+    fs__namespace.mkdirSync(dir, { recursive: true });
+    fs__namespace.unlinkSync(file);
+  } catch {
+  }
+  try {
+    const fd = fs__namespace.openSync(file, "wx");
+    fs__namespace.writeSync(fd, String(pid));
+    fs__namespace.closeSync(fd);
+    return true;
+  } catch {
+    return readShortcutOwner(dir) === pid;
+  }
+}
+function releaseShortcut(dir, options = {}) {
+  const pid = options.pid || process.pid;
+  if (readShortcutOwner(dir) !== pid) return false;
+  try {
+    fs__namespace.unlinkSync(path__namespace.join(dir, OWNER_FILE_NAME));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function createChangeGate() {
+  let last;
+  return (value) => {
+    const key = JSON.stringify(value);
+    if (key === last) return false;
+    last = key;
+    return true;
+  };
+}
+function createShortcutController(options) {
+  let held = false;
+  const ownerOptions = options.pid ? { pid: options.pid } : {};
+  return {
+    held: () => held,
+    tick() {
+      if (held) return true;
+      const api = options.globalShortcut();
+      if (!api) return false;
+      const dir = options.dir();
+      if (!claimShortcut(dir, ownerOptions)) return false;
+      try {
+        held = api.register(SHORTCUT, options.onPress) === true;
+      } catch {
+        held = false;
+      }
+      if (!held) releaseShortcut(dir, ownerOptions);
+      return held;
+    },
+    dispose() {
+      if (held) {
+        try {
+          options.globalShortcut()?.unregister(SHORTCUT);
+        } catch {
+        }
+        held = false;
+      }
+      try {
+        releaseShortcut(options.dir(), ownerOptions);
+      } catch {
+      }
+    }
+  };
+}
+var _tmpl$ = /* @__PURE__ */ web.template(`<div style="display:flex;flex-direction:column;gap:18px;padding:4px 0"><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><div style="display:grid;grid-template-columns:140px 1fr;gap:6px;font-size:13px"><span style=opacity:0.65></span><span></span><span style=opacity:0.65></span><span></span><span style=opacity:0.65></span><span>, </span></div><div style=display:flex;gap:8px;flex-wrap:wrap><button type=button></button><button type=button></button></div></section><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><label style=display:flex;align-items:flex-start;gap:10px;cursor:pointer><input type=checkbox style=margin-top:2px><span style=display:flex;flex-direction:column;gap:2px><span style=font-weight:600></span><span style=opacity:0.7;font-size:12px></span></span></label><label style=display:flex;align-items:flex-start;gap:10px;cursor:pointer><input type=checkbox style=margin-top:2px><span style=display:flex;flex-direction:column;gap:2px><span style=font-weight:600></span><span style=opacity:0.7;font-size:12px></span></span></label><label style=display:flex;align-items:flex-start;gap:10px;cursor:pointer><input type=checkbox style=margin-top:2px><span style=display:flex;flex-direction:column;gap:2px><span style=font-weight:600></span><span style=opacity:0.7;font-size:12px></span></span></label></section><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><label style=display:flex;flex-direction:column;gap:4px;font-size:13px><span></span></label><label style=display:flex;flex-direction:column;gap:4px;font-size:13px><span>: </span><input type=range min=0.5 max=2 step=0.05></label><label style=display:flex;flex-direction:column;gap:4px;font-size:13px><span>: </span><input type=range min=0.5 max=2 step=0.05></label></section><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><label style=display:flex;align-items:center;gap:8px;font-size:13px><input type=checkbox></label><label style=display:flex;align-items:center;gap:8px;font-size:13px><input type=checkbox></label><label style=display:flex;align-items:center;gap:8px;font-size:13px><input type=checkbox></label></section><section style=display:flex;flex-direction:column;gap:10px><h3 style=margin:0;font-size:13px;font-weight:600></h3><p style=margin:0;opacity:0.7;font-size:12px></p><div style=display:flex;gap:8px;flex-wrap:wrap><button type=button></button></div></section><p style=margin:0;opacity:0.6;font-size:12px>`), _tmpl$2 = /* @__PURE__ */ web.template(`<select>`), _tmpl$3 = /* @__PURE__ */ web.template(`<option>`), _tmpl$4 = /* @__PURE__ */ web.template(`<span style=opacity:0.8>`);
 const PET_STATES = ["idle", "thinking", "working", "waiting", "happy", "error", "sleeping"];
 const KNOWN_PACKS = [{
   id: "scrybe",
   label: "Scrybe (built in)"
-}, {
-  id: "clack",
-  label: "Clack"
-}, {
-  id: "shane-hollander",
-  label: "Shane Hollander"
 }];
 const PetStatusSchema = effect.Schema.Struct({
   available: effect.Schema.Boolean,
@@ -534,29 +648,31 @@ const PetControl = gui.Ipc.define({
     openPacksFolder: {}
   }
 });
-function cacheDir() {
-  return path__namespace.join(os__namespace.homedir(), ".cache", "opencode-pet");
+function cacheFile(name) {
+  return path__namespace.join(cacheDir(), name);
 }
-function stateFile() {
-  return path__namespace.join(cacheDir(), "state.json");
+const stateFile = () => cacheFile("state.json");
+const pidFile = () => cacheFile("pet.pid");
+const heartbeatFile = () => cacheFile("heartbeat");
+const hiddenFile = () => cacheFile("hidden");
+const appDirFile = () => cacheFile("app.dir");
+const packsDir = () => cacheFile("packs");
+const configDir = () => ({
+  dir: cacheDir()
+});
+function electron() {
+  try {
+    return require("electron");
+  } catch {
+    return null;
+  }
 }
-function posFile() {
-  return path__namespace.join(cacheDir(), "pos.json");
-}
-function pidFile() {
-  return path__namespace.join(cacheDir(), "pet.pid");
-}
-function heartbeatFile() {
-  return path__namespace.join(cacheDir(), "heartbeat");
-}
-function hiddenFile() {
-  return path__namespace.join(cacheDir(), "hidden");
-}
-function appDirFile() {
-  return path__namespace.join(cacheDir(), "app.dir");
-}
-function packsDir() {
-  return path__namespace.join(cacheDir(), "packs");
+function spawnFn() {
+  try {
+    return require("node:child_process").spawn;
+  } catch {
+    return void 0;
+  }
 }
 function readJson(file) {
   try {
@@ -575,6 +691,34 @@ function writeJson(file, value) {
     fs__namespace.renameSync(tmp, file);
   } catch {
   }
+}
+function readTextFile(file) {
+  try {
+    return fs__namespace.readFileSync(file, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+function startPet() {
+  const recorded = readTextFile(appDirFile());
+  const result = launchPet({
+    appDir: resolveAppDir(recorded ? [recorded] : []),
+    pidFile: pidFile(),
+    lockDir: cacheDir(),
+    spawn: spawnFn()
+  });
+  return result.launched;
+}
+function stopPet() {
+  return closePetProcess({
+    pidFile: pidFile(),
+    heartbeatFile: heartbeatFile()
+  });
+}
+function petRunning() {
+  return petAlreadyRunning({
+    pidFile: pidFile()
+  });
 }
 function readRuntimeState() {
   const fallback = {
@@ -596,41 +740,46 @@ function readRuntimeState() {
     detail
   };
 }
-function readTextFile(file) {
-  try {
-    return fs__namespace.readFileSync(file, "utf8").trim();
-  } catch {
-    return "";
-  }
-}
 function refreshStatus(current) {
-  const cfg = readConfig();
-  const pos = readPosition();
+  const cfg = readConfig(configDir());
+  const pos = readPosition(configDir()) || {
+    x: 0,
+    y: 0
+  };
   return {
     available: current.available,
     running: petRunning(),
-    enabled: cfg.enabled !== false,
-    visible: cfg.visible !== false,
-    autoLaunch: cfg.autoLaunch !== false,
+    enabled: cfg.enabled,
+    visible: cfg.visible,
+    autoLaunch: cfg.autoLaunch,
     state: current.state,
     ts: current.ts,
     detail: current.detail,
-    scale: typeof cfg.scale === "number" ? cfg.scale : 1,
-    animationSpeed: typeof cfg.animationSpeed === "number" ? cfg.animationSpeed : 1,
-    muted: cfg.muted === true,
-    feed: cfg.feed === true,
-    autoHideFullscreen: cfg.autoHideFullscreen === true,
-    pet: typeof cfg.pet === "string" && cfg.pet ? cfg.pet : "scrybe",
+    scale: cfg.scale,
+    animationSpeed: cfg.animationSpeed,
+    muted: cfg.muted,
+    feed: cfg.feed,
+    autoHideFullscreen: cfg.autoHideFullscreen,
+    // An older config may name a pack that no longer ships; the overlay draws
+    // Scrybe for it, so report that.
+    pet: KNOWN_PACKS.some((pack) => pack.id === cfg.pet) ? cfg.pet : "scrybe",
     positionX: pos.x,
     positionY: pos.y
   };
 }
-function electronBrowserWindow() {
+function openCodeIsFullscreen() {
+  const BrowserWindow = electron()?.BrowserWindow;
+  if (!BrowserWindow) return false;
   try {
-    const electron = require("electron");
-    return electron && electron.BrowserWindow ? electron.BrowserWindow : null;
+    return BrowserWindow.getAllWindows().some((win) => {
+      try {
+        return Boolean(win && win.isFullScreen && win.isFullScreen());
+      } catch {
+        return false;
+      }
+    });
   } catch {
-    return null;
+    return false;
   }
 }
 const definition = gui.Plugin.define({
@@ -642,11 +791,18 @@ const definition = gui.Plugin.define({
     let status = refreshStatus(runtime);
     let disposed = false;
     let restartTimer;
-    let shortcutRegistered = false;
+    const statusChanged = createChangeGate();
+    statusChanged(status);
+    const hiddenChanged = createChangeGate();
+    const writeHidden = (hidden) => {
+      if (hiddenChanged(hidden) || hidden && !fs__namespace.existsSync(hiddenFile())) {
+        writeJson(hiddenFile(), hidden);
+      }
+    };
     const publish = () => {
       runtime = readRuntimeState();
       status = refreshStatus(runtime);
-      provider.changed();
+      if (statusChanged(status)) provider.changed();
     };
     const scheduleStart = () => {
       if (restartTimer) clearTimeout(restartTimer);
@@ -666,7 +822,7 @@ const definition = gui.Plugin.define({
           visible: true
         } : {
           enabled: false
-        });
+        }, configDir());
         if (value) startPet();
         else stopPet();
         publish();
@@ -674,13 +830,13 @@ const definition = gui.Plugin.define({
       setVisible: (value) => {
         updateConfig({
           visible: Boolean(value)
-        });
+        }, configDir());
         publish();
       },
       setAutoLaunch: (value) => {
         updateConfig({
           autoLaunch: Boolean(value)
-        });
+        }, configDir());
         publish();
       },
       restart: () => {
@@ -691,50 +847,48 @@ const definition = gui.Plugin.define({
       setScale: (scale) => {
         updateConfig({
           scale
-        });
+        }, configDir());
         publish();
       },
       setAnimationSpeed: (speed) => {
         updateConfig({
           animationSpeed: speed
-        });
+        }, configDir());
         publish();
       },
       setMuted: (muted) => {
         updateConfig({
           muted: Boolean(muted)
-        });
+        }, configDir());
         publish();
       },
       setFeed: (feed) => {
         updateConfig({
           feed: Boolean(feed)
-        });
+        }, configDir());
         publish();
       },
       setAutoHideFullscreen: (value) => {
         updateConfig({
           autoHideFullscreen: Boolean(value)
-        });
-        writeJson(hiddenFile(), false);
+        }, configDir());
+        if (!value) writeHidden(false);
         publish();
       },
       setPet: (pet) => {
-        if (pet && pet.trim()) updateConfig({
-          pet: pet.trim()
-        });
+        const id = typeof pet === "string" ? pet.trim() : "";
+        if (KNOWN_PACKS.some((pack) => pack.id === id)) updateConfig({
+          pet: id
+        }, configDir());
         publish();
       },
       setPosition: (pos) => {
-        writeJson(posFile(), {
-          x: Math.round(pos.x),
-          y: Math.round(pos.y)
-        });
+        writePosition(pos, configDir());
         publish();
       },
       resetPosition: () => {
         try {
-          fs__namespace.unlinkSync(posFile());
+          fs__namespace.unlinkSync(cacheFile("pos.json"));
         } catch {
         }
         stopPet();
@@ -746,70 +900,49 @@ const definition = gui.Plugin.define({
           fs__namespace.mkdirSync(packsDir(), {
             recursive: true
           });
-          const electron = require("electron");
-          if (electron && electron.shell && electron.shell.openPath) {
-            void electron.shell.openPath(packsDir());
-          }
+          const shell = electron()?.shell;
+          if (shell && shell.openPath) void shell.openPath(packsDir());
         } catch {
         }
       }
     });
-    try {
-      const electron = require("electron");
-      if (electron && electron.globalShortcut) {
-        shortcutRegistered = electron.globalShortcut.register("Control+Alt+Shift+P", () => {
-          if (disposed) return;
-          const action = shortcutAction(petRunning());
-          if (action === "stop") {
-            stopPet();
-          } else {
-            updateConfig({
-              visible: true
-            });
-            startPet();
-          }
-          publish();
-        });
-        if (!shortcutRegistered) {
-          console.error("[hello-pet] Ctrl+Alt+Shift+P is already taken by another app");
+    const shortcut = createShortcutController({
+      globalShortcut: () => {
+        const api = electron()?.globalShortcut;
+        return api && typeof api.register === "function" ? api : null;
+      },
+      dir: cacheDir,
+      onPress: () => {
+        if (disposed) return;
+        if (shortcutAction(petRunning()) === "stop") {
+          stopPet();
+        } else {
+          updateConfig({
+            visible: true
+          }, configDir());
+          startPet();
         }
+        publish();
       }
-    } catch {
+    });
+    if (!shortcut.tick()) {
+      console.info("[hello-pet] Ctrl+Alt+Shift+P is held elsewhere (usually the running pet); will retry");
     }
     const statusTimer = setInterval(() => {
-      if (!disposed) publish();
+      if (disposed) return;
+      shortcut.tick();
+      publish();
     }, 2e3);
     const fullscreenTimer = setInterval(() => {
       if (disposed) return;
-      const cfg = readConfig();
-      const BrowserWindow = electronBrowserWindow();
-      let fullscreen = false;
-      if (cfg.autoHideFullscreen === true && BrowserWindow) {
-        try {
-          fullscreen = BrowserWindow.getAllWindows().some((win) => {
-            try {
-              return Boolean(win && win.isFullScreen && win.isFullScreen());
-            } catch {
-              return false;
-            }
-          });
-        } catch {
-          fullscreen = false;
-        }
-      }
-      writeJson(hiddenFile(), fullscreen ? true : false);
+      writeHidden(status.autoHideFullscreen && openCodeIsFullscreen());
     }, 1e3);
     return () => {
       disposed = true;
       clearInterval(statusTimer);
       clearInterval(fullscreenTimer);
       if (restartTimer) clearTimeout(restartTimer);
-      if (shortcutRegistered) {
-        try {
-          require("electron").globalShortcut.unregister("Control+Alt+Shift+P");
-        } catch {
-        }
-      }
+      shortcut.dispose();
       writeJson(hiddenFile(), false);
       provider.dispose();
     };
@@ -857,7 +990,7 @@ const definition = gui.Plugin.define({
           id: "pet-active",
           title: ctx.t("settings.active.title"),
           description: ctx.t("settings.active.description"),
-          keywords: "pack pet active choose clack shane scrybe"
+          keywords: "pack pet active choose scrybe"
         }, {
           id: "pet-appearance",
           title: ctx.t("settings.appearance.title"),
@@ -876,7 +1009,7 @@ const definition = gui.Plugin.define({
         }];
       },
       render: () => (() => {
-        var _el$ = _tmpl$(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.nextSibling, _el$5 = _el$4.firstChild, _el$6 = _el$5.nextSibling, _el$7 = _el$6.nextSibling, _el$8 = _el$7.nextSibling, _el$9 = _el$8.nextSibling, _el$0 = _el$9.nextSibling, _el$1 = _el$0.firstChild, _el$10 = _el$4.nextSibling, _el$11 = _el$10.firstChild, _el$12 = _el$11.nextSibling, _el$13 = _el$2.nextSibling, _el$14 = _el$13.firstChild, _el$15 = _el$14.nextSibling, _el$16 = _el$15.firstChild, _el$17 = _el$16.nextSibling, _el$18 = _el$17.firstChild, _el$19 = _el$18.nextSibling, _el$20 = _el$15.nextSibling, _el$21 = _el$20.firstChild, _el$22 = _el$21.nextSibling, _el$23 = _el$22.firstChild, _el$24 = _el$23.nextSibling, _el$25 = _el$20.nextSibling, _el$26 = _el$25.firstChild, _el$27 = _el$26.nextSibling, _el$28 = _el$27.firstChild, _el$29 = _el$28.nextSibling, _el$30 = _el$13.nextSibling, _el$31 = _el$30.firstChild, _el$32 = _el$31.nextSibling, _el$33 = _el$32.firstChild, _el$34 = _el$33.nextSibling, _el$35 = _el$32.nextSibling, _el$36 = _el$35.firstChild, _el$37 = _el$36.firstChild, _el$38 = _el$36.nextSibling, _el$39 = _el$35.nextSibling, _el$40 = _el$39.firstChild, _el$41 = _el$40.firstChild, _el$42 = _el$40.nextSibling, _el$43 = _el$30.nextSibling, _el$44 = _el$43.firstChild, _el$45 = _el$44.nextSibling, _el$46 = _el$45.firstChild, _el$47 = _el$45.nextSibling, _el$48 = _el$47.firstChild, _el$49 = _el$47.nextSibling, _el$50 = _el$49.firstChild, _el$51 = _el$43.nextSibling, _el$52 = _el$51.firstChild, _el$53 = _el$52.nextSibling, _el$54 = _el$53.nextSibling, _el$55 = _el$54.firstChild, _el$56 = _el$51.nextSibling;
+        var _el$ = _tmpl$(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.nextSibling, _el$5 = _el$4.firstChild, _el$6 = _el$5.nextSibling, _el$7 = _el$6.nextSibling, _el$8 = _el$7.nextSibling, _el$9 = _el$8.nextSibling, _el$0 = _el$9.nextSibling, _el$1 = _el$0.firstChild, _el$10 = _el$4.nextSibling, _el$11 = _el$10.firstChild, _el$12 = _el$11.nextSibling, _el$13 = _el$2.nextSibling, _el$14 = _el$13.firstChild, _el$15 = _el$14.nextSibling, _el$16 = _el$15.firstChild, _el$17 = _el$16.nextSibling, _el$18 = _el$17.firstChild, _el$19 = _el$18.nextSibling, _el$20 = _el$15.nextSibling, _el$21 = _el$20.firstChild, _el$22 = _el$21.nextSibling, _el$23 = _el$22.firstChild, _el$24 = _el$23.nextSibling, _el$25 = _el$20.nextSibling, _el$26 = _el$25.firstChild, _el$27 = _el$26.nextSibling, _el$28 = _el$27.firstChild, _el$29 = _el$28.nextSibling, _el$30 = _el$13.nextSibling, _el$31 = _el$30.firstChild, _el$32 = _el$31.nextSibling, _el$33 = _el$32.firstChild, _el$34 = _el$32.nextSibling, _el$35 = _el$34.firstChild, _el$36 = _el$35.firstChild, _el$37 = _el$35.nextSibling, _el$38 = _el$34.nextSibling, _el$39 = _el$38.firstChild, _el$40 = _el$39.firstChild, _el$41 = _el$39.nextSibling, _el$42 = _el$30.nextSibling, _el$43 = _el$42.firstChild, _el$44 = _el$43.nextSibling, _el$45 = _el$44.firstChild, _el$46 = _el$44.nextSibling, _el$47 = _el$46.firstChild, _el$48 = _el$46.nextSibling, _el$49 = _el$48.firstChild, _el$50 = _el$42.nextSibling, _el$51 = _el$50.firstChild, _el$52 = _el$51.nextSibling, _el$53 = _el$52.nextSibling, _el$54 = _el$53.firstChild, _el$55 = _el$50.nextSibling;
         web.insert(_el$3, () => ctx.t("settings.section.status"));
         web.insert(_el$5, () => ctx.t("settings.status.running"));
         web.insert(_el$6, (() => {
@@ -907,40 +1040,51 @@ const definition = gui.Plugin.define({
         web.insert(_el$29, () => ctx.t("settings.autoLaunch.description"));
         web.insert(_el$31, () => ctx.t("settings.section.pet"));
         web.insert(_el$33, () => ctx.t("settings.active.title"));
-        _el$34.addEventListener("change", (event) => void runControl(() => control.setPet(event.currentTarget.value)));
-        web.insert(_el$34, () => KNOWN_PACKS.map((pack) => (() => {
-          var _el$57 = _tmpl$2();
-          web.insert(_el$57, () => pack.label);
-          web.effect(() => _el$57.value = pack.id);
-          return _el$57;
-        })()));
-        web.insert(_el$36, () => ctx.t("settings.scale"), _el$37);
-        web.insert(_el$36, () => status()?.scale ?? 1, null);
-        _el$38.$$input = (event) => void runControl(() => control.setScale(Number(event.currentTarget.value)));
-        web.insert(_el$40, () => ctx.t("settings.animationSpeed"), _el$41);
-        web.insert(_el$40, () => status()?.animationSpeed ?? 1, null);
-        _el$42.$$input = (event) => void runControl(() => control.setAnimationSpeed(Number(event.currentTarget.value)));
-        web.insert(_el$44, () => ctx.t("settings.section.behaviour"));
-        _el$46.addEventListener("change", (event) => void runControl(() => control.setMuted(!event.currentTarget.checked)));
-        web.insert(_el$45, () => ctx.t("settings.sound"), null);
-        _el$48.addEventListener("change", (event) => void runControl(() => control.setFeed(event.currentTarget.checked)));
-        web.insert(_el$47, () => ctx.t("settings.feed"), null);
-        _el$50.addEventListener("change", (event) => void runControl(() => control.setAutoHideFullscreen(event.currentTarget.checked)));
-        web.insert(_el$49, () => ctx.t("settings.autoHide"), null);
-        web.insert(_el$52, () => ctx.t("settings.section.packs"));
-        web.insert(_el$53, () => ctx.t("settings.packs.note"));
-        _el$55.$$click = () => void runControl(() => control.openPacksFolder());
-        web.insert(_el$55, () => ctx.t("settings.packs.openFolder"));
-        web.insert(_el$56, () => ctx.t("settings.note"));
+        web.insert(_el$32, (() => {
+          var _c$3 = web.memo(() => KNOWN_PACKS.length > 1);
+          return () => _c$3() ? (() => {
+            var _el$56 = _tmpl$2();
+            _el$56.addEventListener("change", (event) => void runControl(() => control.setPet(event.currentTarget.value)));
+            web.insert(_el$56, () => KNOWN_PACKS.map((pack) => (() => {
+              var _el$57 = _tmpl$3();
+              web.insert(_el$57, () => pack.label);
+              web.effect(() => _el$57.value = pack.id);
+              return _el$57;
+            })()));
+            web.effect(() => _el$56.value = status()?.pet ?? "scrybe");
+            return _el$56;
+          })() : (() => {
+            var _el$58 = _tmpl$4();
+            web.insert(_el$58, () => KNOWN_PACKS[0].label);
+            return _el$58;
+          })();
+        })(), null);
+        web.insert(_el$35, () => ctx.t("settings.scale"), _el$36);
+        web.insert(_el$35, () => status()?.scale ?? 1, null);
+        _el$37.$$input = (event) => void runControl(() => control.setScale(Number(event.currentTarget.value)));
+        web.insert(_el$39, () => ctx.t("settings.animationSpeed"), _el$40);
+        web.insert(_el$39, () => status()?.animationSpeed ?? 1, null);
+        _el$41.$$input = (event) => void runControl(() => control.setAnimationSpeed(Number(event.currentTarget.value)));
+        web.insert(_el$43, () => ctx.t("settings.section.behaviour"));
+        _el$45.addEventListener("change", (event) => void runControl(() => control.setMuted(!event.currentTarget.checked)));
+        web.insert(_el$44, () => ctx.t("settings.sound"), null);
+        _el$47.addEventListener("change", (event) => void runControl(() => control.setFeed(event.currentTarget.checked)));
+        web.insert(_el$46, () => ctx.t("settings.feed"), null);
+        _el$49.addEventListener("change", (event) => void runControl(() => control.setAutoHideFullscreen(event.currentTarget.checked)));
+        web.insert(_el$48, () => ctx.t("settings.autoHide"), null);
+        web.insert(_el$51, () => ctx.t("settings.section.packs"));
+        web.insert(_el$52, () => ctx.t("settings.packs.note"));
+        _el$54.$$click = () => void runControl(() => control.openPacksFolder());
+        web.insert(_el$54, () => ctx.t("settings.packs.openFolder"));
+        web.insert(_el$55, () => ctx.t("settings.note"));
         web.effect(() => _el$16.checked = status()?.enabled ?? true);
         web.effect(() => _el$21.checked = status()?.visible ?? true);
         web.effect(() => _el$26.checked = status()?.autoLaunch ?? true);
-        web.effect(() => _el$34.value = status()?.pet ?? "scrybe");
-        web.effect(() => _el$38.value = status()?.scale ?? 1);
-        web.effect(() => _el$42.value = status()?.animationSpeed ?? 1);
-        web.effect(() => _el$46.checked = !(status()?.muted ?? false));
-        web.effect(() => _el$48.checked = status()?.feed ?? false);
-        web.effect(() => _el$50.checked = status()?.autoHideFullscreen ?? false);
+        web.effect(() => _el$37.value = status()?.scale ?? 1);
+        web.effect(() => _el$41.value = status()?.animationSpeed ?? 1);
+        web.effect(() => _el$45.checked = !(status()?.muted ?? false));
+        web.effect(() => _el$47.checked = status()?.feed ?? true);
+        web.effect(() => _el$49.checked = status()?.autoHideFullscreen ?? false);
         return _el$;
       })()
     }));
