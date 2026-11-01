@@ -7,6 +7,7 @@
 // only fall back to the shim when it is missing.
 const fs = require("fs");
 const path = require("path");
+const { isPathInside, isUsableAppDir } = require("./safe-path");
 
 // The packaged binary. Present in a normal `npm install` of electron.
 function distBinary(appDir, isWin) {
@@ -19,20 +20,31 @@ function distBinary(appDir, isWin) {
   );
 }
 
-// The npm-generated shim. Needs `shell: true` on Windows because `.cmd` is
-// not directly executable by CreateProcess.
+// The npm-generated shim. Needs a shell on Windows because `.cmd` is not
+// directly executable by CreateProcess.
 function shimBinary(appDir, isWin) {
   return path.join(appDir, "node_modules", ".bin", isWin ? "electron.cmd" : "electron");
 }
 
 // Returns `{ bin, shell }` for the best available Electron, or undefined when
 // the app has no installed Electron at all.
+//
+// The binary must still live under `appDir` after symlinks are resolved, so a
+// symlinked `node_modules/electron` cannot redirect the launch somewhere else.
+// This is a sanity check, not a trust boundary: whoever controls `appDir`
+// (OPENCODE_PET_DIR, the `app.dir` hint file) controls what is inside it, and
+// can place any executable at `node_modules/electron/dist/electron`.
 function resolveElectronBin(appDir, platform = process.platform) {
+  if (!isUsableAppDir(appDir)) return undefined;
   const isWin = platform === "win32";
   const dist = distBinary(appDir, isWin);
-  if (fs.existsSync(dist)) return { bin: dist, shell: false };
+  if (fs.existsSync(dist) && isPathInside(appDir, dist)) {
+    return { bin: dist, shell: false };
+  }
   const shim = shimBinary(appDir, isWin);
-  if (fs.existsSync(shim)) return { bin: shim, shell: isWin };
+  if (fs.existsSync(shim) && isPathInside(appDir, shim)) {
+    return { bin: shim, shell: isWin };
+  }
   return undefined;
 }
 

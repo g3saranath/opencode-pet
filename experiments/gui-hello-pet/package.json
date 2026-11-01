@@ -1,0 +1,26 @@
+{
+  "name": "opencode-pet-hello-gui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 experiment: a tiny OpenCode GUI plugin that proves the desktop GUI plugin SDK loads.",
+  "exports": {
+    "./gui-experimental": "./dist/gui-experimental.cjs"
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src vite.config.ts",
+    "test": "node --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.2.0",
+    "@types/node": "^22.0.0",
+    "effect": "4.0.1",
+    "oxlint": "^1.0.0",
+    "solid-js": "1.9.17",
+    "typescript": "^5.9.0",
+    "vite": "7.3.7",
+    "vite-plugin-solid": "2.11.10"
+  }
+}

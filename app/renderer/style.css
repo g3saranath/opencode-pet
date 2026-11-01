@@ -56,7 +56,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   position: absolute;
   inset: 0;
   transform-origin: 50% 82%;
-  animation: fly 2.8s ease-in-out infinite;
+  animation: fly calc(2.8s * var(--anim-speed, 1)) ease-in-out infinite;
 }
 
 .sprite {
@@ -101,7 +101,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   transform: translateX(-50%);
   background: radial-gradient(ellipse at center, rgba(0,0,0,0.28), rgba(0,0,0,0) 70%);
   filter: blur(1px);
-  animation: shadowPulse 2.8s ease-in-out infinite;
+  animation: shadowPulse calc(2.8s * var(--anim-speed, 1)) ease-in-out infinite;
 }
 
 /* magical broom/wand glow (per-tool colour), lit while casting */
@@ -211,27 +211,27 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 /* idle — calm hover (defaults) */
 
 /* thinking — slow drift */
-.state-thinking #fly { animation: drift 3s ease-in-out infinite; }
+.state-thinking #fly { animation: drift calc(3s * var(--anim-speed, 1)) ease-in-out infinite; }
 
 /* working — lean into flight, speed lines, broom aglow */
-.state-working #fly { animation: zoom .5s ease-in-out infinite; }
+.state-working #fly { animation: zoom calc(.5s * var(--anim-speed, 1)) ease-in-out infinite; }
 /* the working artwork carries its own props (book/quill), so we skip the
    flying-cast overlays (speed-lines / broom glow / floating prop) here */
 
 /* waiting — expectant hover */
-.state-waiting #fly { animation: fly 1.4s ease-in-out infinite; }
+.state-waiting #fly { animation: fly calc(1.4s * var(--anim-speed, 1)) ease-in-out infinite; }
 
 /* happy — celebratory hop + spell burst */
-.state-happy #fly { animation: cheer .6s ease-in-out infinite; }
+.state-happy #fly { animation: cheer calc(.6s * var(--anim-speed, 1)) ease-in-out infinite; }
 .state-happy .sparkles { display: block; }
 .state-happy .spellglow { opacity: .9; }
 
 /* error — tumble + sweat */
-.state-error #fly { animation: tumble .5s ease-in-out infinite; }
-.state-error .sweat { opacity: 1; animation: drip 1.2s ease-in-out infinite; }
+.state-error #fly { animation: tumble calc(.5s * var(--anim-speed, 1)) ease-in-out infinite; }
+.state-error .sweat { opacity: 1; animation: drip calc(1.2s * var(--anim-speed, 1)) ease-in-out infinite; }
 
 /* sleeping — slow snooze + zzz */
-.state-sleeping #fly { animation: snooze 3.6s ease-in-out infinite; }
+.state-sleeping #fly { animation: snooze calc(3.6s * var(--anim-speed, 1)) ease-in-out infinite; }
 /* the sleeping artwork already has its own zzz, so we skip the overlay one */
 
 /* =====================================================================
@@ -352,4 +352,13 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 @keyframes feedIn {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Paused while the overlay is hidden: the user turned the pet off, or a
+   fullscreen app suppressed it. The window is not visible, so stopping the
+   keyframes costs nothing on screen and keeps the compositor idle. */
+body.paused *,
+body.paused *::before,
+body.paused *::after {
+  animation-play-state: paused !important;
 }
